@@ -1,48 +1,40 @@
 {
-  "name": "multi-business-whatsapp-bot",
-  "version": "2.0.0",
-  "description": "Multi-business WhatsApp ordering bot with QR code scanning, search, and favorites",
+  "name": "whatsapp-multi-business-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp-only multi-business ordering platform",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:studio": "prisma studio",
-    "prisma:seed": "ts-node prisma/seed.ts"
+    "prisma:push": "prisma db push",
+    "prisma:studio": "prisma studio"
   },
-  "prisma": {
-    "seed": "ts-node prisma/seed.ts"
-  },
-  "keywords": ["whatsapp", "multi-business", "ordering", "qr-code", "marketplace"],
-  "author": "Remoluhle",
+  "keywords": ["whatsapp", "bot", "multi-business", "ordering"],
+  "author": "",
   "license": "MIT",
   "dependencies": {
-    "@prisma/client": "^5.9.1",
+    "@prisma/client": "^5.22.0",
     "express": "^4.18.2",
-    "dotenv": "^16.4.1",
-    "axios": "^1.6.5",
-    "ioredis": "^5.3.2",
-    "crypto": "^1.0.1",
-    "joi": "^17.12.0",
-    "winston": "^3.11.0",
-    "bull": "^4.12.0",
-    "cors": "^2.8.5",
-    "helmet": "^7.1.0",
-    "express-rate-limit": "^7.1.5",
+    "dotenv": "^16.3.1",
+    "axios": "^1.6.0",
+    "qrcode": "^1.5.3",
+    "sharp": "^0.33.0",
+    "@aws-sdk/client-s3": "^3.450.0",
     "nanoid": "^3.3.7",
-    "sharp": "^0.33.2",
-    "qrcode": "^1.5.3"
+    "ioredis": "^5.3.2"
   },
   "devDependencies": {
+    "@types/node": "^20.10.0",
     "@types/express": "^4.17.21",
-    "@types/node": "^20.11.5",
-    "@types/cors": "^2.8.17",
-    "@types/bull": "^4.10.0",
     "@types/qrcode": "^1.5.5",
-    "typescript": "^5.3.3",
-    "ts-node-dev": "^2.0.0",
-    "prisma": "^5.9.1"
+    "typescript": "^5.3.2",
+    "tsx": "^4.6.2",
+    "prisma": "^5.22.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
