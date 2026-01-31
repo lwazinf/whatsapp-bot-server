@@ -12,20 +12,27 @@ const whatsappClient = axios.create({
 });
 
 /**
- * Send text message
+ * Send text message - MINIMAL working version based on 360Dialog docs
  */
 export async function sendTextMessage(to: string, body: string) {
   try {
+    // This payload matches EXACTLY what 360Dialog expects
+    // axios automatically JSON.stringifies this object
     const payload = {
       messaging_product: "whatsapp",
       recipient_type: "individual",
       to,
       type: "text",
-      text: { body },
+      text: {
+        body, // This will contain newlines correctly
+      },
     };
 
+    console.log("📤 Sending to:", to);
+    console.log("📝 Message length:", body.length);
+
     const res = await whatsappClient.post("", payload);
-    console.log(`✅ Message sent to ${to}`);
+    console.log(`✅ Message sent successfully`);
     return res.data;
   } catch (err: any) {
     log360Error("sendTextMessage", err);
@@ -34,7 +41,7 @@ export async function sendTextMessage(to: string, body: string) {
 }
 
 /**
- * Send template message (first contact / outside 24h)
+ * Send template message (for first contact / outside 24h window)
  */
 export async function sendTemplateMessage(
   to: string,
