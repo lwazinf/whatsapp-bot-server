@@ -1,106 +1,82 @@
-import axios from 'axios';
+import axios from "axios";
 
-const WHATSAPP_API_URL = 'https://waba-v2.360dialog.io/v1/messages';
+const WHATSAPP_API_URL = "https://waba-v2.360dialog.io/v1/messages";
 const API_KEY = process.env.WHATSAPP_API_KEY!;
 
-export interface SendMessageParams {
-  to: string;
-  text: string;
-}
+/**
+ * Axios instance for 360dialog
+ */
+const whatsappClient = axios.create({
+  baseURL: WHATSAPP_API_URL,
+  headers: {
+    "Content-Type": "application/json",
+    "D360-API-KEY": API_KEY,
+  },
+});
 
-export interface SendImageParams {
-  to: string;
-  imageUrl: string;
-  caption?: string;
-}
-
-export async function sendTextMessage(params: SendMessageParams): Promise<void> {
+/**
+ * Send a free-form text message
+ * ⚠️ Only works INSIDE the 24h WhatsApp session window
+ */
+export async function sendTextMessage(to: string, body: string) {
   try {
-    await axios.post(
-      WHATSAPP_API_URL,
-      {
-        messaging_product: 'whatsapp',
-        to: params.to,
-        type: 'text',
-        text: {
-          body: params.text
-        }
+    const payload = {
+      messaging_product: "whatsapp",
+      to,
+      type: "text",
+      text: {
+        body,
       },
-      {
-        headers: {
-          'D360-API-KEY': API_KEY,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-    console.log(`✅ Message sent to ${params.to}`);
-  } catch (error: any) {
-    console.error('❌ Error sending message:', error.response?.data || error.message);
-    throw error;
+    };
+
+    const res = await whatsappClient.post("", payload);
+    return res.data;
+  } catch (err: any) {
+    log360Error("sendTextMessage", err);
+    throw err;
   }
 }
 
-export async function sendImageMessage(params: SendImageParams): Promise<void> {
+/**
+ * Send a WhatsApp template message
+ * ✅ REQUIRED for first contact / outside 24h window
+ */
+export async function sendTemplateMessage(
+  to: string,
+  templateName: string,
+  languageCode = "en"
+) {
   try {
-    await axios.post(
-      WHATSAPP_API_URL,
-      {
-        messaging_product: 'whatsapp',
-        to: params.to,
-        type: 'image',
-        image: {
-          link: params.imageUrl,
-          caption: params.caption || ''
-        }
+    const payload = {
+      messaging_product: "whatsapp",
+      to,
+      type: "template",
+      template: {
+        name: templateName,
+        language: {
+          code: languageCode,
+        },
       },
-      {
-        headers: {
-          'D360-API-KEY': API_KEY,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-    console.log(`✅ Image sent to ${params.to}`);
-  } catch (error: any) {
-    console.error('❌ Error sending image:', error.response?.data || error.message);
-    throw error;
+    };
+
+    const res = await whatsappClient.post("", payload);
+    return res.data;
+  } catch (err: any) {
+    log360Error("sendTemplateMessage", err);
+    throw err;
   }
 }
 
-export async function sendButtonMessage(to: string, text: string, buttons: Array<{id: string, title: string}>): Promise<void> {
-  try {
-    await axios.post(
-      WHATSAPP_API_URL,
-      {
-        messaging_product: 'whatsapp',
-        to,
-        type: 'interactive',
-        interactive: {
-          type: 'button',
-          body: {
-            text
-          },
-          action: {
-            buttons: buttons.map(btn => ({
-              type: 'reply',
-              reply: {
-                id: btn.id,
-                title: btn.title
-              }
-            }))
-          }
-        }
-      },
-      {
-        headers: {
-          'D360-API-KEY': API_KEY,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-    console.log(`✅ Button message sent to ${to}`);
-  } catch (error: any) {
-    console.error('❌ Error sending button message:', error.response?.data || error.message);
-    throw error;
+/**
+ * Helper: clean error logging from 360dialog
+ */
+function log360Error(context: string, err: any) {
+  if (err.response) {
+    console.error(`❌ 360dialog ${context} error:`, {
+      status: err.response.status,
+      data: err.response.data,
+    });
+  } else {
+    console.error(`❌ ${context} error:`, err.message);
   }
 }
