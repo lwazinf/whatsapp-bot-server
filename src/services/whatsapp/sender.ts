@@ -14,13 +14,11 @@ const whatsappClient = axios.create({
 /**
  * Send text message
  */
-export async function sendTextMessage(
-  to: string,
-  body: string
-) {
+export async function sendTextMessage(to: string, body: string) {
   try {
     const payload = {
       messaging_product: "whatsapp",
+      recipient_type: "individual",
       to,
       type: "text",
       text: { body },
