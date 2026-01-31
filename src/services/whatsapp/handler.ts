@@ -85,12 +85,17 @@ async function sendWelcomeMessage(to: string): Promise<void> {
 
 🏪 Multi-Business Ordering Platform
 
-What would you like to do?`;
+What would you like to do?
 
-  await sendButtonMessage(to, welcomeText, [
-    { id: 'register', title: '📝 Register Business' },
-    { id: 'browse', title: '🛍️ Browse Businesses' }
-  ]);
+1️⃣ Register Business
+2️⃣ Browse Businesses
+
+Reply with 1 or 2`;
+
+  await sendTextMessage({
+    to,
+    text: welcomeText
+  });
 }
 
 async function startBusinessRegistration(to: string): Promise<void> {
