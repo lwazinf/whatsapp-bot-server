@@ -12,36 +12,30 @@ const whatsappClient = axios.create({
 });
 
 /**
- * Send text message - MINIMAL working version based on 360Dialog docs
+ * ABSOLUTE MINIMUM TEST - Just send "Hi"
  */
 export async function sendTextMessage(to: string, body: string) {
   try {
-    // This payload matches EXACTLY what 360Dialog expects
-    // axios automatically JSON.stringifies this object
-    const payload = {
+    console.log("📤 Sending to:", to);
+    
+    const response = await whatsappClient.post("", {
       messaging_product: "whatsapp",
       recipient_type: "individual",
       to,
       type: "text",
-      text: {
-        body, // This will contain newlines correctly
-      },
-    };
-
-    console.log("📤 Sending to:", to);
-    console.log("📝 Message length:", body.length);
-
-    const res = await whatsappClient.post("", payload);
-    console.log(`✅ Message sent successfully`);
-    return res.data;
+      text: { body: "Hi" }
+    });
+    
+    console.log("✅ Sent:", response.data);
+    return response.data;
   } catch (err: any) {
-    log360Error("sendTextMessage", err);
+    console.error("❌ Error:", err.response?.data);
     throw err;
   }
 }
 
 /**
- * Send template message (for first contact / outside 24h window)
+ * Send template message
  */
 export async function sendTemplateMessage(
   to: string,
@@ -62,21 +56,7 @@ export async function sendTemplateMessage(
     const res = await whatsappClient.post("", payload);
     return res.data;
   } catch (err: any) {
-    log360Error("sendTemplateMessage", err);
+    console.error(`❌ Template error:`, err.response?.data);
     throw err;
-  }
-}
-
-/**
- * Error logger
- */
-function log360Error(context: string, err: any) {
-  if (err.response) {
-    console.error(`❌ 360dialog ${context} error:`, {
-      status: err.response.status,
-      data: err.response.data,
-    });
-  } else {
-    console.error(`❌ ${context} error:`, err.message);
   }
 }
