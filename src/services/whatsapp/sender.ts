@@ -13,12 +13,10 @@ const whatsappClient = axios.create({
 
 /**
  * Send text message
- * Supports old calls: sendTextMessage(to)
- * Supports new calls: sendTextMessage(to, body)
  */
 export async function sendTextMessage(
   to: string,
-  body: string = "👋 Welcome to Omeru Marketplace!"
+  body: string
 ) {
   try {
     const payload = {
@@ -29,6 +27,7 @@ export async function sendTextMessage(
     };
 
     const res = await whatsappClient.post("", payload);
+    console.log(`✅ Message sent to ${to}`);
     return res.data;
   } catch (err: any) {
     log360Error("sendTextMessage", err);
@@ -61,20 +60,6 @@ export async function sendTemplateMessage(
     log360Error("sendTemplateMessage", err);
     throw err;
   }
-}
-
-/**
- * Compatibility function for handler.ts
- * (buttons are NOT supported by 360dialog anymore,
- * so we gracefully downgrade to text)
- */
-export async function sendButtonMessage(
-  to: string,
-  text: string
-) {
-  console.warn("⚠️ sendButtonMessage is deprecated, falling back to text");
-
-  return sendTextMessage(to, text);
 }
 
 /**

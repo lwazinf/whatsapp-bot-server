@@ -1,4 +1,4 @@
-import { sendTextMessage, sendButtonMessage } from "./sender";
+import { sendTextMessage } from "./sender";
 
 interface WebhookMessage {
   from: string;
@@ -40,8 +40,7 @@ export async function handleIncomingMessage(body: any): Promise<void> {
 
     const message = changes.value.messages[0];
     const from = message.from;
-    const messageText =
-      message.text?.body || message.button?.text || "";
+    const messageText = message.text?.body || message.button?.text || "";
 
     console.log(`📱 Message from ${from}: ${messageText}`);
 
@@ -107,5 +106,5 @@ First, what is your business name?
   );
 
   // TODO: Store user state in Redis
-  // await redis.set(\`user:${to}:state\`, 'awaiting_business_name');
+  // await redis.set(`user:${to}:state`, 'awaiting_business_name');
 }
