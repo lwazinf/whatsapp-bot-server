@@ -1,4 +1,4 @@
-import { sendTextMessage, sendButtonMessage } from './sender';
+import { sendTextMessage, sendButtonMessage } from "./sender";
 
 interface WebhookMessage {
   from: string;
@@ -28,27 +28,26 @@ export async function handleIncomingMessage(body: any): Promise<void> {
   try {
     const entry = body.entry?.[0] as WebhookEntry;
     if (!entry) {
-      console.log('⚠️ No entry in webhook');
+      console.log("⚠️ No entry in webhook");
       return;
     }
 
     const changes = entry.changes?.[0];
     if (!changes?.value?.messages) {
-      console.log('⚠️ No messages in webhook');
+      console.log("⚠️ No messages in webhook");
       return;
     }
 
     const message = changes.value.messages[0];
     const from = message.from;
-    const messageText = message.text?.body || message.button?.text || '';
+    const messageText =
+      message.text?.body || message.button?.text || "";
 
     console.log(`📱 Message from ${from}: ${messageText}`);
 
-    // Route message based on content
     await routeMessage(from, messageText);
-
   } catch (error) {
-    console.error('❌ Error handling message:', error);
+    console.error("❌ Error handling message:", error);
   }
 }
 
@@ -56,23 +55,23 @@ async function routeMessage(from: string, text: string): Promise<void> {
   const lowerText = text.toLowerCase().trim();
 
   // Welcome message
-  if (lowerText === 'hi' || lowerText === 'hello' || lowerText === 'start') {
+  if (lowerText === "hi" || lowerText === "hello" || lowerText === "start") {
     await sendWelcomeMessage(from);
     return;
   }
 
   // Register business
-  if (lowerText === 'register' || lowerText === '1') {
+  if (lowerText === "register" || lowerText === "1") {
     await startBusinessRegistration(from);
     return;
   }
 
   // Browse businesses
-  if (lowerText === 'browse' || lowerText === '2') {
-    await sendTextMessage({
-      to: from,
-      text: '🏪 Browse businesses feature coming soon!\n\nFor now, use "register" to add your business.'
-    });
+  if (lowerText === "browse" || lowerText === "2") {
+    await sendTextMessage(
+      from,
+      "🏪 Browse businesses feature coming soon!\n\nFor now, use \"register\" to add your business."
+    );
     return;
   }
 
@@ -92,24 +91,21 @@ What would you like to do?
 
 Reply with 1 or 2`;
 
-  await sendTextMessage({
-    to,
-    text: welcomeText
-  });
+  await sendTextMessage(to, welcomeText);
 }
 
 async function startBusinessRegistration(to: string): Promise<void> {
-  await sendTextMessage({
+  await sendTextMessage(
     to,
-    text: `📝 Business Registration
+    `📝 Business Registration
 
 Let's get your business set up!
 
 First, what is your business name?
 
 (Type your business name and send)`
-  });
+  );
 
   // TODO: Store user state in Redis
-  // await redis.set(`user:${to}:state`, 'awaiting_business_name');
+  // await redis.set(\`user:${to}:state\`, 'awaiting_business_name');
 }
