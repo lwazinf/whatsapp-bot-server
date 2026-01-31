@@ -3,9 +3,6 @@ import axios from "axios";
 const WHATSAPP_API_URL = "https://waba-v2.360dialog.io/v1/messages";
 const API_KEY = process.env.WHATSAPP_API_KEY!;
 
-/**
- * Axios instance for 360dialog
- */
 const whatsappClient = axios.create({
   baseURL: WHATSAPP_API_URL,
   headers: {
@@ -15,18 +12,20 @@ const whatsappClient = axios.create({
 });
 
 /**
- * Send a free-form text message
- * ⚠️ Only works INSIDE the 24h WhatsApp session window
+ * Send text message
+ * Supports old calls: sendTextMessage(to)
+ * Supports new calls: sendTextMessage(to, body)
  */
-export async function sendTextMessage(to: string, body: string) {
+export async function sendTextMessage(
+  to: string,
+  body: string = "👋 Welcome to Omeru Marketplace!"
+) {
   try {
     const payload = {
       messaging_product: "whatsapp",
       to,
       type: "text",
-      text: {
-        body,
-      },
+      text: { body },
     };
 
     const res = await whatsappClient.post("", payload);
@@ -38,8 +37,7 @@ export async function sendTextMessage(to: string, body: string) {
 }
 
 /**
- * Send a WhatsApp template message
- * ✅ REQUIRED for first contact / outside 24h window
+ * Send template message (first contact / outside 24h)
  */
 export async function sendTemplateMessage(
   to: string,
@@ -53,9 +51,7 @@ export async function sendTemplateMessage(
       type: "template",
       template: {
         name: templateName,
-        language: {
-          code: languageCode,
-        },
+        language: { code: languageCode },
       },
     };
 
@@ -68,7 +64,21 @@ export async function sendTemplateMessage(
 }
 
 /**
- * Helper: clean error logging from 360dialog
+ * Compatibility function for handler.ts
+ * (buttons are NOT supported by 360dialog anymore,
+ * so we gracefully downgrade to text)
+ */
+export async function sendButtonMessage(
+  to: string,
+  text: string
+) {
+  console.warn("⚠️ sendButtonMessage is deprecated, falling back to text");
+
+  return sendTextMessage(to, text);
+}
+
+/**
+ * Error logger
  */
 function log360Error(context: string, err: any) {
   if (err.response) {
