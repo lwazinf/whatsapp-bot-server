@@ -1,10 +1,10 @@
 export async function sendImageMessage(to: string, mediaId: string, caption: string) {
-  const url = `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`;
+  const url = `https://graph.facebook.com/v17.0/${process.env.WHATSAPP_PHONE_ID}/messages`;
   try {
     const response = await fetch(url, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${process.env.ACCESS_TOKEN}`,
+        'Authorization': `Bearer ${process.env.WHATSAPP_API_KEY}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
@@ -14,19 +14,21 @@ export async function sendImageMessage(to: string, mediaId: string, caption: str
         image: { id: mediaId, caption: caption }
       }),
     });
-    return await response.json();
+    const data = await response.json();
+    if (!response.ok) console.error("❌ Meta Image Error:", JSON.stringify(data));
+    return data;
   } catch (error) {
-    console.error("Error sending image:", error);
+    console.error("❌ Network Error (Image):", error);
   }
 }
 
 export async function sendTextMessage(to: string, text: string) {
-  const url = `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`;
+  const url = `https://graph.facebook.com/v17.0/${process.env.WHATSAPP_PHONE_ID}/messages`;
   try {
     const response = await fetch(url, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${process.env.ACCESS_TOKEN}`,
+        'Authorization': `Bearer ${process.env.WHATSAPP_API_KEY}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
@@ -36,8 +38,10 @@ export async function sendTextMessage(to: string, text: string) {
         text: { body: text }
       }),
     });
-    return await response.json();
+    const data = await response.json();
+    if (!response.ok) console.error("❌ Meta Text Error:", JSON.stringify(data));
+    return data;
   } catch (error) {
-    console.error("Error sending text:", error);
+    console.error("❌ Network Error (Text):", error);
   }
 }

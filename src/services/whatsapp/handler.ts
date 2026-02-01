@@ -12,8 +12,10 @@ export async function handleIncomingMessage(body: any): Promise<void> {
     const text = message.text?.body?.trim() || "";
     const imageId = message.image?.id;
 
+    // Fetch current user state
     const userState = await prisma.userState.findUnique({ where: { phoneNumber: from } });
 
+    // Helper to show the main menu
     const showManagementMenu = async (phoneNumber: string): Promise<void> => {
       const business = await prisma.business.findUnique({ 
         where: { ownerPhone: phoneNumber },
@@ -36,9 +38,9 @@ export async function handleIncomingMessage(body: any): Promise<void> {
     // --- GLOBAL ACTIONS: DELETE ---
     if (text.toUpperCase().startsWith('DELETE ')) {
       const productId = text.split(' ')[1];
-      const business = await prisma.business.findUnique({ where: { ownerPhone: from } });
+      const biz = await prisma.business.findUnique({ where: { ownerPhone: from } });
       const product = await prisma.product.findFirst({
-        where: { id: productId, businessId: business?.id }
+        where: { id: productId, businessId: biz?.id }
       });
 
       if (product) {
@@ -51,7 +53,18 @@ export async function handleIncomingMessage(body: any): Promise<void> {
       return;
     }
 
-    // --- PRODUCT ADDITION FLOW (WITH PREVIEW) ---
+    // --- REGISTRATION FLOW ---
+    if (userState?.state === 'AWAITING_NAME') {
+      await prisma.business.create({
+        data: { ownerPhone: from, name: text }
+      });
+      await prisma.userState.delete({ where: { phoneNumber: from } });
+      await sendTextMessage(from, `✅ Store "${text}" created!`);
+      await showManagementMenu(from);
+      return;
+    }
+
+    // --- PRODUCT ADDITION FLOW ---
     if (userState?.state === 'AWAITING_PRODUCT_NAME') {
       await prisma.userState.update({
         where: { phoneNumber: from },
@@ -74,7 +87,7 @@ export async function handleIncomingMessage(body: any): Promise<void> {
     if (userState?.state === 'AWAITING_PRODUCT_PRICE') {
       const price = parseFloat(text.replace(/[^0-9.]/g, ''));
       if (isNaN(price)) {
-        await sendTextMessage(from, "❌ Use numbers only:");
+        await sendTextMessage(from, "❌ Invalid price. Use numbers only:");
         return;
       }
       const data = userState.data as any;
@@ -82,7 +95,7 @@ export async function handleIncomingMessage(body: any): Promise<void> {
         where: { phoneNumber: from },
         data: { state: 'AWAITING_PRODUCT_IMAGE', data: { ...data, price } }
       });
-      await sendTextMessage(from, "📸 Upload a product image:");
+      await sendTextMessage(from, "📸 Please upload an image of the product:");
       return;
     }
 
@@ -93,12 +106,14 @@ export async function handleIncomingMessage(body: any): Promise<void> {
       }
       const data = userState.data as any;
       const previewCaption = `👀 *BUYER PREVIEW*\n\n*${data.name}*\n${data.desc}\n\nPrice: *R${data.price}*`;
+      
       await sendImageMessage(from, imageId, previewCaption);
+
       await prisma.userState.update({
         where: { phoneNumber: from },
         data: { state: 'CONFIRMING_PRODUCT', data: { ...data, imageHandle: imageId } }
       });
-      await sendTextMessage(from, "Does this look correct?\n\n✅ Reply *YES*\n❌ Reply *NO*");
+      await sendTextMessage(from, "Does this look correct?\n\n✅ Reply *YES* to add\n❌ Reply *NO* to cancel");
       return;
     }
 
@@ -108,29 +123,30 @@ export async function handleIncomingMessage(body: any): Promise<void> {
         const biz = await prisma.business.findUnique({ where: { ownerPhone: from } });
         await prisma.product.create({
           data: {
-            name: data.name, description: data.desc,
-            price: data.price, imageHandle: data.imageHandle,
+            name: data.name,
+            description: data.desc,
+            price: data.price,
+            imageHandle: data.imageHandle,
             businessId: biz!.id
           }
         });
-        await sendTextMessage(from, "✅ Product live!");
+        await sendTextMessage(from, "✅ Success! Product live.");
+      } else {
+        await sendTextMessage(from, "❌ Cancelled. Taking you back to the menu.");
       }
       await prisma.userState.delete({ where: { phoneNumber: from } });
       await showManagementMenu(from);
       return;
     }
 
-    // --- MAIN NAVIGATION (CRASH FIXED HERE) ---
+    // --- MAIN NAVIGATION ---
     if (text === '1') {
       const business = await prisma.business.findUnique({ where: { ownerPhone: from } });
-      
-      // We use UPSERT to ensure the record exists before we try to update it later
       await prisma.userState.upsert({
         where: { phoneNumber: from },
         update: { state: business ? 'AWAITING_PRODUCT_NAME' : 'AWAITING_NAME', data: {} },
         create: { phoneNumber: from, state: business ? 'AWAITING_PRODUCT_NAME' : 'AWAITING_NAME', data: {} }
       });
-
       await sendTextMessage(from, business ? "🛒 Product name:" : "🏪 Store name:");
       return;
     }
@@ -142,22 +158,26 @@ export async function handleIncomingMessage(body: any): Promise<void> {
       });
 
       if (!business || business.products.length === 0) {
-        await sendTextMessage(from, "Catalog empty!");
+        await sendTextMessage(from, "Catalog empty! Add products with *1*.");
       } else {
+        await sendTextMessage(from, `📦 *${business.name} Catalog*:`);
         for (const product of business.products) {
           const caption = `*${product.name}*\nPrice: *R${product.price}*\n\n🗑️ Reply "DELETE ${product.id}"`;
-          product.imageHandle 
-            ? await sendImageMessage(from, product.imageHandle, caption) 
-            : await sendTextMessage(from, caption);
+          if (product.imageHandle) {
+            await sendImageMessage(from, product.imageHandle, caption);
+          } else {
+            await sendTextMessage(from, caption);
+          }
         }
       }
       await showManagementMenu(from);
       return;
     }
 
+    // Default Fallback
     await showManagementMenu(from);
 
   } catch (error) {
-    console.error("Handler Error:", error);
+    console.error("❌ Handler Error:", error);
   }
 }
