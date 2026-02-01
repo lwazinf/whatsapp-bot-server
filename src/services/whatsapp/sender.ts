@@ -1,6 +1,5 @@
 import fetch from 'node-fetch';
 
-// v2 is the modern Cloud API standard for 360Dialog
 const API_URL = 'https://waba-v2.360dialog.io/messages';
 const API_KEY = process.env.WHATSAPP_API_KEY;
 
