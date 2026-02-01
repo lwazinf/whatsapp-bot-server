@@ -12,25 +12,26 @@ export const handleIncomingMessage = async (body: any) => {
   const from = message.from;
   const type = message.type;
   
-  // Extracting different message types
+  // 1. Extract inputs based on type
   const location = message.location; 
   let incomingText = '';
 
   if (type === 'text') {
     incomingText = message.text?.body || '';
   } else if (type === 'interactive') {
+    // This captures clicks from the buttons we send
     incomingText = message.interactive?.reply?.id || '';
   }
 
   try {
-    // 1. Session Management
+    // 2. Session Management
     let session = await db.userSession.upsert({
       where: { wa_id: from },
       update: { last_active: new Date() },
       create: { wa_id: from, mode: 'CUSTOMER' }
     });
 
-    // 2. Handle Merchant Location Update
+    // 3. Handle Merchant Location Pin
     if (location && session.mode === 'MERCHANT') {
       await db.merchant.update({
         where: { wa_id: from },
@@ -39,61 +40,74 @@ export const handleIncomingMessage = async (body: any) => {
           longitude: location.longitude,
         }
       });
-      return sendTextMessage(from, "📍 *Location Updated!* Your shop is now pinned. Customers will see you in local searches.");
+      return sendTextMessage(from, "📍 *Location Saved!* Your shop is now pinned on the map for customers.");
     }
 
-    // 3. The SwitchOmeru Toggle
-    if (incomingText.trim() === 'SwitchOmeru') {
+    // 4. Mode Switcher
+    if (incomingText === 'SwitchOmeru') {
       const merchant = await db.merchant.findUnique({ where: { wa_id: from } });
-
-      if (!merchant || !merchant.is_verified) {
-        return sendTextMessage(from, "❌ Access Denied. Your number is not registered as a verified merchant.");
-      }
+      if (!merchant) return sendTextMessage(from, "❌ You are not registered as a merchant.");
 
       const newMode = session.mode === 'MERCHANT' ? 'CUSTOMER' : 'MERCHANT';
       await db.userSession.update({ where: { wa_id: from }, data: { mode: newMode } });
 
       if (newMode === 'MERCHANT') {
-        return sendButtons(from, `🔓 *Merchant Mode Active*\nWelcome back, ${merchant.trading_name}!`, [
+        return sendButtons(from, `🏪 *Merchant Mode: ON*\nWelcome back, ${merchant.trading_name}!`, [
           { id: 'm_orders', title: '📦 View Orders' },
-          { id: 'm_location', title: '📍 Set Location' },
-          { id: 'm_status', title: '⚙️ My Status' }
+          { id: 'm_location', title: '📍 Update Pin' }
         ]);
-      } else {
-        return sendTextMessage(from, "🔄 Switched to *Customer Mode*.");
       }
+      return sendTextMessage(from, "👤 *Customer Mode: ON*");
     }
 
-    // 4. Routing
+    // 5. Routing
     if (session.mode === 'MERCHANT') {
       return handleMerchantLogic(from, incomingText);
-    } else {
-      return handleCustomerLogic(from, incomingText);
-    }
+    } 
+    
+    // Default Customer greeting
+    return sendTextMessage(from, "Welcome to Omeru! Type 'SwitchOmeru' if you are a merchant.");
 
   } catch (err) {
-    console.error("Critical Handler Error:", err);
-    return sendTextMessage(from, "⚠️ System error. Please try again later.");
+    console.error("Handler Error:", err);
   }
 };
 
 async function handleMerchantLogic(from: string, input: string) {
-  if (input === 'm_orders') {
-    return sendTextMessage(from, "Checking your active orders... 📈");
-  }
-  if (input === 'm_location') {
-    return sendTextMessage(from, "📍 Please share your *Location* (Pin) using the WhatsApp attachment icon.");
-  }
-  
-  return sendButtons(from, "Merchant Dashboard:", [
-    { id: 'm_orders', title: '📦 View Orders' },
-    { id: 'm_location', title: '📍 Set Location' }
-  ]);
-}
+  // 1. Fetch the merchant record we just created
+  const merchant = await db.merchant.findUnique({ where: { wa_id: from } });
 
-async function handleCustomerLogic(from: string, input: string) {
-  if (['hi', 'hello'].includes(input.toLowerCase())) {
-    return sendTextMessage(from, "Welcome to Omeru! 🛍️ Search for a shop handle to start.");
+  if (!merchant) {
+    return sendTextMessage(from, "❌ Merchant profile not found. Please contact support.");
   }
-  return sendTextMessage(from, "Type 'Hi' to see options.");
+
+  // 2. Handle specific button IDs or text commands
+  switch (input) {
+    case 'm_orders':
+      const orders = await db.order.findMany({
+        where: { merchant_id: merchant.id },
+        take: 3,
+        orderBy: { createdAt: 'desc' }
+      });
+
+      if (orders.length === 0) {
+        return sendTextMessage(from, "📦 *No active orders yet.* When customers order, they will appear here!");
+      }
+
+      const orderList = orders.map(o => 
+        `🔸 *Order #${o.id.slice(-4)}*\nStatus: ${o.status}\nTotal: R${o.total}`
+      ).join('\n\n');
+      
+      return sendTextMessage(from, `📈 *Your Recent Orders:*\n\n${orderList}`);
+
+    case 'm_location':
+      return sendTextMessage(from, "📍 *Update Your Shop Location*\nPlease use the WhatsApp 'Location' feature (📎 > Location) to send your shop's current pin.");
+
+    default:
+      // This is the "Main Menu" they see upon switching
+      return sendButtons(from, `🏪 *${merchant.trading_name} Dashboard*`, [
+        { id: 'm_orders', title: '📦 View Orders' },
+        { id: 'm_location', title: '📍 Set Location' }
+      ]);
+  }
 }

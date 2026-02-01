@@ -1,33 +1,81 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL") // This will be your Supabase Connection String
+  url      = env("DATABASE_URL")
+  // REMOVE the directUrl line entirely to stop the error
 }
 
-model Merchant {
-  wa_id         String   @id
-  handle        String   @unique
-  trading_name  String
-  logo_url      String?
-  lat_default   Decimal
-  long_default  Decimal
-  lat_temp      Decimal?
-  long_temp     Decimal?
-  is_verified   Boolean  @default(false)
-  state         String   @default("AWAITING_NAME")
-  created_at    DateTime @default(now())
-
-  @@map("merchants") // Maps the model to your existing SQL table name
-}
-
+// 1. Session Management: Essential for remembering if a user is in 'MERCHANT' or 'CUSTOMER' mode.
 model UserSession {
-  wa_id          String   @id
-  mode           String   @default("CUSTOMER")
-  current_cart   Json     @default("[]")
-  last_active    DateTime @default(now())
+  id          String   @id @default(nanoid())
+  wa_id       String   @unique
+  mode        Mode     @default(CUSTOMER)
+  last_active DateTime @default(now())
+  metadata    Json?    // For storing temporary state (e.g., current order ID being edited)
+}
 
-  @@map("user_sessions")
+enum Mode {
+  CUSTOMER
+  MERCHANT
+}
+
+// 2. Merchant Profile: Added latitude/longitude for the "Set Location" functionality.
+model Merchant {
+  id            String   @id @default(nanoid())
+  wa_id         String   @unique
+  trading_name  String
+  description   String?
+  address       String?
+  
+  // GPS Coordinates (Added for today's roadmap)
+  latitude      Float?
+  longitude     Float?
+  
+  is_verified   Boolean  @default(false)
+  is_online     Boolean  @default(true)
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  products      Product[]
+  orders        Order[]
+}
+
+// 3. Product Catalog
+model Product {
+  id          String   @id @default(nanoid())
+  merchant_id String
+  name        String
+  price       Decimal  @db.Decimal(10, 2)
+  image_url   String?
+  is_active   Boolean  @default(true)
+  
+  merchant    Merchant @relation(fields: [merchant_id], references: [id])
+}
+
+// 4. Order System
+model Order {
+  id          String      @id @default(nanoid())
+  merchant_id String
+  customer_id String      // The wa_id of the customer
+  status      OrderStatus @default(PENDING)
+  total       Decimal     @db.Decimal(10, 2)
+  
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  merchant    Merchant    @relation(fields: [merchant_id], references: [id])
+}
+
+enum OrderStatus {
+  PENDING
+  ACCEPTED
+  COMPLETED
+  CANCELLED
 }
