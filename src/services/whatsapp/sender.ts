@@ -1,12 +1,9 @@
 import fetch from 'node-fetch';
 
-// Use the 360Dialog Sandbox or Production endpoint
-const API_URL = 'https://waba.360dialog.io/v1/messages';
+// v2 is the modern Cloud API standard for 360Dialog
+const API_URL = 'https://waba-v2.360dialog.io/messages';
 const API_KEY = process.env.WHATSAPP_API_KEY;
 
-/**
- * Sends a plain text message
- */
 export const sendTextMessage = async (to: string, text: string) => {
   const response = await fetch(API_URL, {
     method: 'POST',
@@ -15,6 +12,7 @@ export const sendTextMessage = async (to: string, text: string) => {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
+      messaging_product: "whatsapp",
       recipient_type: "individual",
       to,
       type: "text",
@@ -28,9 +26,6 @@ export const sendTextMessage = async (to: string, text: string) => {
   }
 };
 
-/**
- * Sends interactive reply buttons
- */
 export const sendButtons = async (to: string, text: string, buttons: { id: string, title: string }[]) => {
   const buttonPayload = buttons.map(btn => ({
     type: "reply",
@@ -44,6 +39,7 @@ export const sendButtons = async (to: string, text: string, buttons: { id: strin
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
+      messaging_product: "whatsapp",
       recipient_type: "individual",
       to,
       type: "interactive",

@@ -3,111 +3,72 @@ import { sendTextMessage, sendButtons } from './sender';
 
 const db = new PrismaClient();
 
-export const handleIncomingMessage = async (body: any) => {
-  const entry = body.entry?.[0]?.changes?.[0]?.value;
-  const message = entry?.messages?.[0];
-
-  if (!message) return;
-
+export const handleIncomingMessage = async (message: any) => {
   const from = message.from;
-  const type = message.type;
-  
-  // 1. Extract inputs based on type
-  const location = message.location; 
-  let incomingText = '';
+  const text = message.text?.body?.trim();
+  const location = message.location; // WhatsApp GPS pin
 
-  if (type === 'text') {
-    incomingText = message.text?.body || '';
-  } else if (type === 'interactive') {
-    // This captures clicks from the buttons we send
-    incomingText = message.interactive?.reply?.id || '';
+  // 1. Check/Create Session
+  let session = await db.userSession.findUnique({ where: { wa_id: from } });
+  if (!session) {
+    session = await db.userSession.create({ data: { wa_id: from, mode: 'CUSTOMER' } });
   }
 
-  try {
-    // 2. Session Management
-    let session = await db.userSession.upsert({
+  // 2. Handle Global Commands
+  if (text === 'SwitchOmeru') {
+    const merchant = await db.merchant.findUnique({ where: { wa_id: from } });
+    if (!merchant || !merchant.is_verified) {
+      return sendTextMessage(from, "🚫 Access Denied. This number is not a verified Merchant.");
+    }
+    
+    const newMode = session.mode === 'CUSTOMER' ? 'MERCHANT' : 'CUSTOMER';
+    await db.userSession.update({
       where: { wa_id: from },
-      update: { last_active: new Date() },
-      create: { wa_id: from, mode: 'CUSTOMER' }
+      data: { mode: newMode }
     });
+    
+    return sendTextMessage(from, `Switched to *${newMode}* mode.`);
+  }
 
-    // 3. Handle Merchant Location Pin
-    if (location && session.mode === 'MERCHANT') {
+  // 3. Route Logic based on Mode
+  if (session.mode === 'MERCHANT') {
+    // Check for location pin first
+    if (location) {
       await db.merchant.update({
         where: { wa_id: from },
-        data: {
-          latitude: location.latitude,
-          longitude: location.longitude,
-        }
+        data: { latitude: location.latitude, longitude: location.longitude }
       });
-      return sendTextMessage(from, "📍 *Location Saved!* Your shop is now pinned on the map for customers.");
+      return sendTextMessage(from, "✅ *Location Updated!* Customers can now find your shop on the map.");
     }
 
-    // 4. Mode Switcher
-    if (incomingText === 'SwitchOmeru') {
-      const merchant = await db.merchant.findUnique({ where: { wa_id: from } });
-      if (!merchant) return sendTextMessage(from, "❌ You are not registered as a merchant.");
-
-      const newMode = session.mode === 'MERCHANT' ? 'CUSTOMER' : 'MERCHANT';
-      await db.userSession.update({ where: { wa_id: from }, data: { mode: newMode } });
-
-      if (newMode === 'MERCHANT') {
-        return sendButtons(from, `🏪 *Merchant Mode: ON*\nWelcome back, ${merchant.trading_name}!`, [
-          { id: 'm_orders', title: '📦 View Orders' },
-          { id: 'm_location', title: '📍 Update Pin' }
-        ]);
-      }
-      return sendTextMessage(from, "👤 *Customer Mode: ON*");
-    }
-
-    // 5. Routing
-    if (session.mode === 'MERCHANT') {
-      return handleMerchantLogic(from, incomingText);
-    } 
-    
-    // Default Customer greeting
-    return sendTextMessage(from, "Welcome to Omeru! Type 'SwitchOmeru' if you are a merchant.");
-
-  } catch (err) {
-    console.error("Handler Error:", err);
+    // Handle Button Responses or Menu
+    const buttonId = message.interactive?.button_reply?.id || text;
+    return handleMerchantMenu(from, buttonId);
+  } else {
+    return sendTextMessage(from, "Welcome to the Customer Shop! Type 'SwitchOmeru' if you are a merchant.");
   }
 };
 
-async function handleMerchantLogic(from: string, input: string) {
-  // 1. Fetch the merchant record we just created
+async function handleMerchantMenu(from: string, input: string) {
   const merchant = await db.merchant.findUnique({ where: { wa_id: from } });
-
-  if (!merchant) {
-    return sendTextMessage(from, "❌ Merchant profile not found. Please contact support.");
+  
+  if (input === 'm_orders') {
+    const orders = await db.order.findMany({
+      where: { merchant_id: merchant?.id },
+      take: 5,
+      orderBy: { createdAt: 'desc' }
+    });
+    const list = orders.length ? orders.map(o => `📦 #${o.id.slice(-4)} - R${o.total}`).join('\n') : "No orders yet.";
+    return sendTextMessage(from, `📈 *Recent Orders:*\n\n${list}`);
   }
 
-  // 2. Handle specific button IDs or text commands
-  switch (input) {
-    case 'm_orders':
-      const orders = await db.order.findMany({
-        where: { merchant_id: merchant.id },
-        take: 3,
-        orderBy: { createdAt: 'desc' }
-      });
-
-      if (orders.length === 0) {
-        return sendTextMessage(from, "📦 *No active orders yet.* When customers order, they will appear here!");
-      }
-
-      const orderList = orders.map(o => 
-        `🔸 *Order #${o.id.slice(-4)}*\nStatus: ${o.status}\nTotal: R${o.total}`
-      ).join('\n\n');
-      
-      return sendTextMessage(from, `📈 *Your Recent Orders:*\n\n${orderList}`);
-
-    case 'm_location':
-      return sendTextMessage(from, "📍 *Update Your Shop Location*\nPlease use the WhatsApp 'Location' feature (📎 > Location) to send your shop's current pin.");
-
-    default:
-      // This is the "Main Menu" they see upon switching
-      return sendButtons(from, `🏪 *${merchant.trading_name} Dashboard*`, [
-        { id: 'm_orders', title: '📦 View Orders' },
-        { id: 'm_location', title: '📍 Set Location' }
-      ]);
+  if (input === 'm_location') {
+    return sendTextMessage(from, "📍 Please send your shop's location pin using the WhatsApp paperclip icon.");
   }
+
+  // Default: Show Dashboard
+  return sendButtons(from, `🏪 *${merchant?.trading_name}* Dashboard`, [
+    { id: 'm_orders', title: '📦 View Orders' },
+    { id: 'm_location', title: '📍 Set Location' }
+  ]);
 }
