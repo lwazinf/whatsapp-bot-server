@@ -9,11 +9,9 @@ datasource db {
 
 model Business {
   id          String   @id @default(nanoid())
-  phoneNumber String   @unique // The WhatsApp number of the owner
+  ownerPhone  String   @unique  // <--- Make sure this is exactly "ownerPhone"
   name        String
   category    String?
-  description String?
-  isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   products    Product[]
 }

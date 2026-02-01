@@ -16,8 +16,11 @@ export async function handleIncomingMessage(body: any) {
   if (userState?.state === 'AWAITING_NAME') {
     // Save the Business Name to the DB
     await prisma.business.create({
-      data: { ownerPhone: from, name: text }
-    });
+  data: { 
+    ownerPhone: from, // <--- If your schema says 'phoneNumber', change this to 'phoneNumber'
+    name: text 
+  }
+});
     
     // Clear the state so they aren't stuck in registration
     await prisma.userState.delete({ where: { phoneNumber: from } });
