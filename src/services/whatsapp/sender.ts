@@ -12,51 +12,36 @@ const whatsappClient = axios.create({
 });
 
 /**
- * ABSOLUTE MINIMUM TEST - Just send "Hi"
+ * STEP 1: Can we send "Hi"?
  */
 export async function sendTextMessage(to: string, body: string) {
-  try {
-    console.log("📤 Sending to:", to);
-    
-    const response = await whatsappClient.post("", {
-      messaging_product: "whatsapp",
-      recipient_type: "individual",
-      to,
-      type: "text",
-      text: { body: "Hi" }
-    });
-    
-    console.log("✅ Sent:", response.data);
-    return response.data;
-  } catch (err: any) {
-    console.error("❌ Error:", err.response?.data);
-    throw err;
-  }
+  console.log("📤 STEP 1: Testing single word");
+  
+  const response = await whatsappClient.post("", {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to,
+    type: "text",
+    text: { body: "Hi" }
+  });
+  
+  console.log("✅ STEP 1 SUCCESS:", response.data);
+  return response.data;
 }
 
-/**
- * Send template message
- */
 export async function sendTemplateMessage(
   to: string,
   templateName: string,
   languageCode = "en"
 ) {
-  try {
-    const payload = {
-      messaging_product: "whatsapp",
-      to,
-      type: "template",
-      template: {
-        name: templateName,
-        language: { code: languageCode },
-      },
-    };
-
-    const res = await whatsappClient.post("", payload);
-    return res.data;
-  } catch (err: any) {
-    console.error(`❌ Template error:`, err.response?.data);
-    throw err;
-  }
+  const payload = {
+    messaging_product: "whatsapp",
+    to,
+    type: "template",
+    template: {
+      name: templateName,
+      language: { code: languageCode },
+    },
+  };
+  return await whatsappClient.post("", payload);
 }
