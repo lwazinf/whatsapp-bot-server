@@ -4,33 +4,30 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  url      = env("DATABASE_URL") // This will be your Supabase Connection String
 }
 
-model Business {
-  id          String   @id @default(nanoid())
-  ownerPhone  String   @unique
-  name        String
-  category    String?
-  createdAt   DateTime @default(now())
-  products    Product[]
+model Merchant {
+  wa_id         String   @id
+  handle        String   @unique
+  trading_name  String
+  logo_url      String?
+  lat_default   Decimal
+  long_default  Decimal
+  lat_temp      Decimal?
+  long_temp     Decimal?
+  is_verified   Boolean  @default(false)
+  state         String   @default("AWAITING_NAME")
+  created_at    DateTime @default(now())
+
+  @@map("merchants") // Maps the model to your existing SQL table name
 }
 
-model Product {
-  id          String   @id @default(nanoid())
-  name        String
-  price       Float    // Representing ZAR/Rands
-  description String?  // New: For individual product details
-  imageHandle String?  // New: To store the WhatsApp Media ID or URL
-  businessId  String
-  business    Business @relation(fields: [businessId], references: [id])
-  createdAt   DateTime @default(now()) // New: For tracking daily trends
-}
+model UserSession {
+  wa_id          String   @id
+  mode           String   @default("CUSTOMER")
+  current_cart   Json     @default("[]")
+  last_active    DateTime @default(now())
 
-// For tracking user progress in the chat state machine
-model UserState {
-  phoneNumber String   @id
-  state       String   // e.g., "AWAITING_PRODUCT_IMAGE", "CONFIRMING_PRODUCT"
-  data        Json?    // Temporary storage for multi-step form data
-  updatedAt   DateTime @updatedAt
+  @@map("user_sessions")
 }
