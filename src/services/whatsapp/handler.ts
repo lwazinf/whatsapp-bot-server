@@ -19,56 +19,57 @@ export const handleIncomingMessage = async (webhookData: any) => {
         if (!session) {
             session = await db.userSession.create({ data: { wa_id: from, mode: Mode.CUSTOMER } });
         }
+        
         const merchant = await db.merchant.findUnique({ where: { wa_id: from } });
 
-        // --- ENHANCED ROLE SWITCHER ---
+        // LOGS FOR DEBUGGING (Check these in Railway)
+        console.log(`📩 New Message from ${from}: "${input}"`);
+        console.log(`👤 Session Mode: ${session.mode}`);
+        console.log(`🏬 Merchant Found: ${merchant ? merchant.trading_name : 'NO'}`);
+
         if (input === 'SwitchOmeru') {
             if (from === ADMIN_NUMBER) {
-                // Admin gets a choice
-                return sendButtons(from, "🛠️ *Admin Command Center*\nSelect your active role:", [
-                    { id: 'set_mode_ADMIN', title: '💎 Admin Mode' },
-                    { id: 'set_mode_MERCHANT', title: '🏪 Merchant Mode' },
-                    { id: 'set_mode_CUSTOMER', title: '🛍️ Customer Mode' }
+                return sendButtons(from, "🛠️ *Admin*", [
+                    { id: 'set_mode_ADMIN', title: '💎 Admin' },
+                    { id: 'set_mode_MERCHANT', title: '🏪 Merchant' },
+                    { id: 'set_mode_CUSTOMER', title: '🛍️ Customer' }
                 ]);
             } else if (merchant?.status === MerchantStatus.ACTIVE) {
-                // Regular Merchant just toggles
                 const next = session.mode === Mode.MERCHANT ? Mode.CUSTOMER : Mode.MERCHANT;
                 await db.userSession.update({ where: { wa_id: from }, data: { mode: next } });
                 return sendTextMessage(from, `🔄 Switched to: *${next}*`);
             }
         }
 
-        // Handle the specific mode selection from Admin buttons
         if (input?.startsWith('set_mode_')) {
             const selectedMode = input.replace('set_mode_', '') as Mode;
             await db.userSession.update({ where: { wa_id: from }, data: { mode: selectedMode } });
-            return sendTextMessage(from, `✅ Role activated: *${selectedMode}*`);
+            return sendTextMessage(from, `✅ Mode set to: *${selectedMode}*`);
         }
 
-        // --- ROUTING LOGIC ---
-
-        // 1. ONBOARDING (For PENDING merchants)
+        // ROUTING
         if (session.mode === Mode.REGISTERING || (merchant && merchant.status !== MerchantStatus.ACTIVE)) {
             return handleOnboardingAction(from, input, session, merchant);
         }
 
-        // 2. MERCHANT ENGINE (For ACTIVE merchants)
-        if (session.mode === Mode.MERCHANT && merchant?.status === MerchantStatus.ACTIVE) {
+        if (session.mode === Mode.MERCHANT) {
+            if (!merchant) {
+                // If mode is Merchant but no profile exists, reset them
+                await db.userSession.update({ where: { wa_id: from }, data: { mode: Mode.CUSTOMER } });
+                return sendTextMessage(from, "⚠️ Merchant profile missing. Reverted to Customer.");
+            }
             return handleMerchantAction(from, input, session, merchant, message);
         }
 
-        // 3. ADMIN ENGINE
-        if (session.mode === Mode.ADMIN && from === ADMIN_NUMBER) {
-            return sendTextMessage(from, "💎 *System Admin Dashboard*\n(Approve merchants, verify payouts, global stats)");
-        }
-
-        // 4. CUSTOMER ENGINE (Default)
+        // DEFAULT CUSTOMER
         if (input?.toLowerCase() === 'hi' || input === 'start') {
-            return sendTextMessage(from, "Welcome to Omeru! Type 'SwitchOmeru' to change roles.");
+            return sendTextMessage(from, "Welcome to Omeru! Type 'SwitchOmeru' to manage your shop.");
         }
 
-    } catch (err) {
-        console.error("Handler Error:", err);
-        return sendTextMessage(from, "⚠️ System Error.");
+    } catch (err: any) {
+        // THIS LOG IS CRITICAL - It tells us exactly why the system error happens
+        console.error("❌ CRITICAL HANDLER ERROR:", err.message);
+        console.error("Stack Trace:", err.stack);
+        return sendTextMessage(from, `⚠️ System Error: ${err.message}`);
     }
 };
