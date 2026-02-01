@@ -1,39 +1,43 @@
-import axios from "axios";
-
-const WHATSAPP_API_URL = "https://waba-v2.360dialog.io/messages";
-const API_KEY = process.env.WHATSAPP_API_KEY!;
-
-const whatsappClient = axios.create({
-  baseURL: WHATSAPP_API_URL,
-  headers: {
-    "Content-Type": "application/json",
-    "D360-API-KEY": API_KEY,
-  },
-});
-
-export async function sendTextMessage(to: string, body: string) {
-  console.log("📤 Sending WhatsApp message to:", to);
-  
-  const response = await whatsappClient.post("", {
-    messaging_product: "whatsapp", // ✅ Added fix for 400 error
-    recipient_type: "individual",
-    to,
-    type: "text",
-    text: { body }
-  });
-  
-  console.log("✅ Success:", response.data);
-  return response.data;
+export async function sendImageMessage(to: string, mediaId: string, caption: string) {
+  const url = `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`;
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.ACCESS_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to: to,
+        type: "image",
+        image: { id: mediaId, caption: caption }
+      }),
+    });
+    return await response.json();
+  } catch (error) {
+    console.error("Error sending image:", error);
+  }
 }
 
-export async function sendTemplateMessage(to: string, templateName: string, languageCode = "en") {
-  return await whatsappClient.post("", {
-    messaging_product: "whatsapp",
-    to,
-    type: "template",
-    template: {
-      name: templateName,
-      language: { code: languageCode },
-    },
-  });
+export async function sendTextMessage(to: string, text: string) {
+  const url = `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`;
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.ACCESS_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to: to,
+        type: "text",
+        text: { body: text }
+      }),
+    });
+    return await response.json();
+  } catch (error) {
+    console.error("Error sending text:", error);
+  }
 }
