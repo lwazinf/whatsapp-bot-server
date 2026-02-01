@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const WHATSAPP_API_URL = "https://waba-v2.360dialog.io/v1/messages";
+const WHATSAPP_API_URL = "https://waba-v2.360dialog.io/messages";
 const API_KEY = process.env.WHATSAPP_API_KEY!;
 
 const whatsappClient = axios.create({
@@ -16,10 +16,9 @@ const whatsappClient = axios.create({
  */
 export async function sendTextMessage(to: string, body: string) {
   console.log("📤 STEP 1: Testing single word");
+  console.log("🔑 Using API Key:", API_KEY?.substring(0, 10) + "...");
   
   const response = await whatsappClient.post("", {
-    messaging_product: "whatsapp",
-    recipient_type: "individual",
     to,
     type: "text",
     text: { body: "Hi" }
