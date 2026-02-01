@@ -13,16 +13,15 @@ datasource db {
 
 // 1. Session Management: Essential for remembering if a user is in 'MERCHANT' or 'CUSTOMER' mode.
 model UserSession {
-  id          String   @id @default(nanoid())
-  wa_id       String   @unique
-  mode        Mode     @default(CUSTOMER)
-  last_active DateTime @default(now())
-  metadata    Json?    // For storing temporary state (e.g., current order ID being edited)
+  id    Int    @id @default(autoincrement())
+  wa_id String @unique
+  mode  Mode   @default(CUSTOMER)
 }
 
 enum Mode {
   CUSTOMER
   MERCHANT
+  REGISTERING
 }
 
 // 2. Merchant Profile: Added latitude/longitude for the "Set Location" functionality.
