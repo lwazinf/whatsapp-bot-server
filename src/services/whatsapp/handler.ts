@@ -12,7 +12,9 @@ export const handleIncomingMessage = async (webhookData: any) => {
 
   const from = message.from; 
   const textBody = message.text?.body?.trim();
-  const input = message.interactive?.button_reply?.id || textBody;
+  const buttonId = message.interactive?.button_reply?.id;
+  const location = message.location;
+  const input = buttonId || textBody;
 
   try {
     let session = await db.userSession.findUnique({ where: { wa_id: from } });
@@ -20,38 +22,72 @@ export const handleIncomingMessage = async (webhookData: any) => {
       session = await db.userSession.create({ data: { wa_id: from, mode: Mode.CUSTOMER } });
     }
 
-    // 1. Secret Handshake Logic
-    if (input === 'SwitchOmeru') {
-      const merchant = await db.merchant.findUnique({ where: { wa_id: from } });
-      
-      // If they aren't in your Merchant table at all, the command does nothing (Hidden)
-      if (!merchant) return; 
+    const merchant = await db.merchant.findUnique({ where: { wa_id: from } });
 
-      // If they are an approved merchant but have no store name yet, start registration
-      if (!merchant.trading_name || merchant.trading_name === "") {
+    // 1. Silent Secret Handshake
+    if (input === 'SwitchOmeru') {
+      if (!merchant) return; // Ignore completely if not a merchant
+
+      // If they are authorized but have no store yet -> Start Registration
+      if (!merchant.trading_name) {
         await db.userSession.update({ 
           where: { wa_id: from }, 
           data: { mode: Mode.REGISTERING } 
         });
-        return sendTextMessage(from, "👋 Approved! Let's set up your shop. What is your *Business Name*?");
+        return sendTextMessage(from, "👋 Authorization confirmed. Please reply with your *Business Name* to set up your shop:");
       }
 
-      // If they are already set up, just toggle modes
+      // If already setup -> Toggle and show relevant Dashboard
       const newMode = session.mode === Mode.CUSTOMER ? Mode.MERCHANT : Mode.CUSTOMER;
       await db.userSession.update({ where: { wa_id: from }, data: { mode: newMode } });
-      return sendTextMessage(from, `✅ Mode: *${newMode}*`);
+      
+      if (newMode === Mode.MERCHANT) {
+          return sendMerchantDashboard(from, merchant);
+      } else {
+          return sendTextMessage(from, "✅ Mode switched to: *CUSTOMER*");
+      }
     }
 
-    // 2. State Machine Routing
+    // 2. Registration Logic
     if (session.mode === Mode.REGISTERING) {
-      return handleRegistration(from, input);
+      await db.merchant.update({
+        where: { wa_id: from },
+        data: { trading_name: input, is_verified: true }
+      });
+      await db.userSession.update({ where: { wa_id: from }, data: { mode: Mode.MERCHANT } });
+      await sendTextMessage(ADMIN_NUMBER, `🆕 *New Store Live:* ${input} (${from})`);
+      
+      const updatedMerchant = await db.merchant.findUnique({ where: { wa_id: from } });
+      return sendMerchantDashboard(from, updatedMerchant!);
     }
 
-    if (session.mode === Mode.MERCHANT) {
-      return handleMerchantMenu(from, input, message.location);
+    // 3. Merchant Dashboard Actions
+    if (session.mode === Mode.MERCHANT && merchant) {
+      if (location) {
+        await db.merchant.update({
+          where: { wa_id: from },
+          data: { latitude: location.latitude, longitude: location.longitude }
+        });
+        await sendTextMessage(from, "📍 *Location updated successfully!*");
+        return sendMerchantDashboard(from, merchant); // Return to menu
+      }
+
+      if (input === 'm_orders') {
+        const orders = await db.order.findMany({ where: { merchant_id: merchant.id }, take: 3 });
+        const list = orders.length ? orders.map(o => `🔸 #${o.id.slice(-4)} - R${o.total}`).join('\n') : "No active orders.";
+        await sendTextMessage(from, `📈 *Recent Orders:*\n\n${list}`);
+        return sendMerchantDashboard(from, merchant); // Return to menu
+      }
+
+      if (input === 'm_location') {
+        return sendTextMessage(from, "📍 Please send your shop location pin using the WhatsApp paperclip.");
+      }
+      
+      // If they send random text in merchant mode, just re-show dashboard
+      return sendMerchantDashboard(from, merchant);
     }
 
-    // Default Customer logic
+    // 4. Default Customer logic
     if (input?.toLowerCase() === 'hi') {
       return sendTextMessage(from, "Welcome to Omeru! 🛍️");
     }
@@ -61,39 +97,9 @@ export const handleIncomingMessage = async (webhookData: any) => {
   }
 };
 
-async function handleRegistration(from: string, input: string) {
-  // Update the blank merchant record with the name they just sent
-  await db.merchant.update({
-    where: { wa_id: from },
-    data: { trading_name: input, is_verified: true }
-  });
-
-  await db.userSession.update({ 
-    where: { wa_id: from }, 
-    data: { mode: Mode.MERCHANT } 
-  });
-
-  await sendTextMessage(ADMIN_NUMBER, `🏪 New Store Setup: *${input}* (${from})`);
-  return sendTextMessage(from, `✅ Store *${input}* is now live! You are in Merchant Mode.`);
-}
-
-async function handleMerchantMenu(from: string, input: string, location?: any) {
-    const merchant = await db.merchant.findUnique({ where: { wa_id: from } });
-    
-    if (location) {
-        await db.merchant.update({
-            where: { wa_id: from },
-            data: { latitude: location.latitude, longitude: location.longitude }
-        });
-        return sendTextMessage(from, "📍 Location updated!");
-    }
-
-    if (input === 'm_orders') {
-        return sendTextMessage(from, "📦 No active orders.");
-    }
-
-    return sendButtons(from, `🏪 Dashboard: ${merchant?.trading_name}`, [
-        { id: 'm_orders', title: '📦 View Orders' },
-        { id: 'm_location', title: '📍 Set Location' }
-    ]);
+async function sendMerchantDashboard(to: string, merchant: any) {
+  return sendButtons(to, `🏪 *${merchant.trading_name}* Dashboard`, [
+    { id: 'm_orders', title: '📦 View Orders' },
+    { id: 'm_location', title: '📍 Update Location' }
+  ]);
 }
