@@ -2,7 +2,7 @@ import { PrismaClient, Mode, MerchantStatus, OrderStatus } from '@prisma/client'
 import { sendTextMessage, sendButtons } from './sender';
 
 const db = new PrismaClient();
-const ADMIN_NUMBER = "27746854339"; // Your number
+const ADMIN_NUMBER = "27746854339";
 
 export const handleIncomingMessage = async (webhookData: any) => {
   const value = webhookData.entry?.[0]?.changes?.[0]?.value;
@@ -10,137 +10,100 @@ export const handleIncomingMessage = async (webhookData: any) => {
   if (!message) return;
 
   const from = message.from;
-  const textBody = message.text?.body?.trim();
-  const input = message.interactive?.button_reply?.id || textBody;
-  const location = message.location;
+  const input = message.interactive?.button_reply?.id || message.text?.body?.trim();
+  const image = message.image;
 
   try {
-    // Establish or get session
     let session = await db.userSession.findUnique({ where: { wa_id: from } });
     if (!session) session = await db.userSession.create({ data: { wa_id: from, mode: Mode.CUSTOMER } });
 
-    const merchant = await db.merchant.findUnique({ where: { wa_id: from } });
+    const merchant = await db.merchant.findUnique({ where: { wa_id: from }, include: { hours: true, products: true } });
 
-    // --- GATEKEEPER: ROLE SWITCHING ---
+    // --- SWITCH LOGIC ---
     if (input === 'SwitchOmeru') {
-      if (from === ADMIN_NUMBER) {
-        const nextMode = session.mode === Mode.ADMIN ? Mode.CUSTOMER : Mode.ADMIN;
-        await db.userSession.update({ where: { wa_id: from }, data: { mode: nextMode } });
-        return nextMode === Mode.ADMIN ? sendAdminDashboard(from) : sendTextMessage(from, "Switched to *Customer Mode*.");
-      }
-
-      if (merchant) {
-        if (merchant.status === MerchantStatus.REVOKED) return; 
-        if (merchant.status === MerchantStatus.PAUSED) return sendTextMessage(from, "⏸ Your merchant account is paused.");
-
-        if (!merchant.trading_name) {
-          await db.userSession.update({ where: { wa_id: from }, data: { mode: Mode.REGISTERING } });
-          return sendTextMessage(from, "👋 Authorization confirmed. Please reply with your *Business Name* to setup shop:");
+        let nextMode: Mode = Mode.CUSTOMER;
+        if (from === ADMIN_NUMBER) {
+            if (session.mode === Mode.ADMIN) nextMode = Mode.MERCHANT;
+            else if (session.mode === Mode.MERCHANT) nextMode = Mode.CUSTOMER;
+            else nextMode = Mode.ADMIN;
+        } else if (merchant?.status === MerchantStatus.ACTIVE) {
+            nextMode = session.mode === Mode.MERCHANT ? Mode.CUSTOMER : Mode.MERCHANT;
         }
-
-        const nextMode = session.mode === Mode.MERCHANT ? Mode.CUSTOMER : Mode.MERCHANT;
         await db.userSession.update({ where: { wa_id: from }, data: { mode: nextMode } });
-        return nextMode === Mode.MERCHANT ? sendMerchantDashboard(from, merchant) : sendTextMessage(from, "Switched to *Customer Mode*.");
-      }
-      return; // Silent if not authorized
+        return routeToDashboard(from, nextMode, merchant);
     }
 
-    // --- ADMIN SPECIFIC OVERRIDES ---
-    if (session.mode === Mode.ADMIN && from === ADMIN_NUMBER) {
-      if (input.startsWith('Approve_')) {
-        const target = input.split('_')[1];
-        await db.merchant.update({ where: { wa_id: target }, data: { status: MerchantStatus.ACTIVE } });
-        await sendTextMessage(target, "🎉 *Omeru Update:* Your store is now ACTIVE! Type *SwitchOmeru* to login.");
-        return sendTextMessage(from, `✅ Activated: ${target}`);
-      }
-
-      // Super-Admin Command: "AddMerchant_27123456789"
-      if (input.startsWith('AddMerchant_')) {
-        const target = input.split('_')[1];
-        await db.merchant.upsert({
-          where: { wa_id: target },
-          update: { status: MerchantStatus.ACTIVE },
-          create: { wa_id: target, status: MerchantStatus.ACTIVE }
-        });
-        return sendTextMessage(from, `🏪 Pre-approved Merchant: ${target}`);
-      }
-
-      if (input === 'adm_tx_30') return sendTransactionReport(from, 30);
-      if (input === 'adm_tx_90') return sendTransactionReport(from, 90);
-      if (input === 'adm_pending') return handleAdminPending(from);
+    // --- REGISTRATION FLOW (ID & BANK) ---
+    if (session.mode === Mode.REGISTERING) {
+        return handleDetailedRegistration(from, input, image, merchant);
     }
 
-    // --- STATE ROUTING ---
-    switch (session.mode) {
-      case Mode.ADMIN: return sendAdminDashboard(from);
-      case Mode.MERCHANT: return handleMerchantFlow(from, input, merchant, location);
-      case Mode.REGISTERING: return handleRegistrationFlow(from, input);
-      default: return handleCustomerFlow(from, input);
+    // --- MERCHANT CORE ---
+    if (session.mode === Mode.MERCHANT && merchant) {
+        // Complete Order (Customer Picked Up)
+        if (input.startsWith('complete_')) {
+            const oid = input.replace('complete_', '');
+            await db.order.update({ where: { id: oid }, data: { status: OrderStatus.COMPLETED } });
+            return sendTextMessage(from, "✅ Order marked as Completed. It is now eligible for Friday's payout.");
+        }
+        
+        if (input === 'm_settings') {
+            return sendButtons(from, "⚙️ *Merchant Settings*", [
+                { id: 'm_bank_edit', title: '🏦 Update Bank' },
+                { id: 'm_hours_edit', title: '🕒 Update Hours' }
+            ]);
+        }
     }
-  } catch (error) {
-    console.error("❌ Critical Logic Error:", error);
-  }
+
+    // Standard Fallback
+    return routeToDashboard(from, session.mode, merchant);
+
+  } catch (error) { console.error("❌ Error:", error); }
 };
 
-async function handleAdminPending(from: string) {
-  const pending = await db.merchant.findMany({ where: { status: MerchantStatus.PENDING } });
-  if (!pending.length) return sendTextMessage(from, "✅ No pending requests.");
-  for (const p of pending) {
-    await sendButtons(from, `Shop: ${p.trading_name}\nPhone: ${p.wa_id}`, [
-      { id: `Approve_${p.wa_id}`, title: '✅ Approve' }
-    ]);
-  }
+/**
+ * KYC & BANK REGISTRATION
+ */
+async function handleDetailedRegistration(from: string, input: string, image: any, merchant: any) {
+    if (!merchant.id_number) {
+        // ... (Previous steps for Trading Name, Legal Name, ID No)
+    }
+
+    if (!merchant.id_photo_url) {
+        if (image) {
+            await db.merchant.update({ where: { wa_id: from }, data: { id_photo_url: image.id } });
+            return sendTextMessage(from, "🏦 *Bank Details:* Please reply with your Bank Name, Account Number, and Type (e.g., FNB, 123456789, Savings):");
+        }
+        return sendTextMessage(from, "📸 Please upload a clear *Photo of your ID* for verification:");
+    }
+
+    if (!merchant.bank_acc_no) {
+        const parts = input.split(',').map(p => p.trim());
+        if (parts.length < 2) return sendTextMessage(from, "⚠️ Please use the format: Bank Name, Account Number, Type");
+        await db.merchant.update({ 
+            where: { wa_id: from }, 
+            data: { bank_name: parts[0], bank_acc_no: parts[1], bank_type: parts[2] || 'Savings' } 
+        });
+        
+        const legalText = `⚖️ *TERMS:* Payouts every Friday. 7% flat fee. Refunds deduct gateway fees from Merchant. Accept?`;
+        return sendButtons(from, legalText, [{ id: 'accept_legal', title: '✅ I Accept' }]);
+    }
+
+    if (input === 'accept_legal') {
+        await db.merchant.update({ where: { wa_id: from }, data: { accepted_terms: true } });
+        await db.userSession.update({ where: { wa_id: from }, data: { mode: Mode.CUSTOMER } });
+        return sendTextMessage(from, "✅ All set! OMERU will verify your ID and bank details. We'll notify you when your shop is live.");
+    }
 }
 
-async function sendTransactionReport(to: string, days: number) {
-  const dateLimit = new Date();
-  dateLimit.setDate(dateLimit.getDate() - days);
-  const stats = await db.order.aggregate({
-    where: { createdAt: { gte: dateLimit }, status: OrderStatus.PAID },
-    _sum: { amount: true },
-    _count: { id: true }
-  });
-  const total = stats._sum.amount || 0;
-  return sendTextMessage(to, `📊 *${days} Day Report*\n\n💰 Revenue: R${total}\n📦 Count: ${stats._count.id}`);
-}
-
-async function handleMerchantFlow(from: string, input: string, merchant: any, location?: any) {
-  if (location) {
-    await db.merchant.update({ where: { wa_id: from }, data: { latitude: location.latitude, longitude: location.longitude } });
-    await sendTextMessage(from, "📍 Location pinned!");
-    return sendMerchantDashboard(from, merchant);
-  }
-  if (input === 'm_orders') {
-    const orders = await db.order.findMany({ where: { merchant_id: merchant.id }, take: 5, orderBy: { createdAt: 'desc' } });
-    const list = orders.map(o => `🔸 R${o.amount} - ${o.status}`).join('\n');
-    await sendTextMessage(from, `📦 *Orders:*\n\n${list || "No orders."}`);
-    return sendMerchantDashboard(from, merchant);
-  }
-  return sendMerchantDashboard(from, merchant);
-}
-
-async function handleRegistrationFlow(from: string, input: string) {
-  await db.merchant.update({ where: { wa_id: from }, data: { trading_name: input, status: MerchantStatus.PENDING } });
-  await db.userSession.update({ where: { wa_id: from }, data: { mode: Mode.CUSTOMER } });
-  await sendTextMessage(ADMIN_NUMBER, `🔔 *Alert:* Registration from ${input} (${from})`);
-  return sendTextMessage(from, "✅ Saved. Admin will review and activate your store.");
-}
-
-async function handleCustomerFlow(from: string, input: string) {
-  if (input?.toLowerCase() === 'hi') return sendTextMessage(from, "Welcome to Omeru! 🛍️");
-}
-
-function sendAdminDashboard(to: string) {
-  return sendButtons(to, "💎 *Omeru Admin*", [
-    { id: 'adm_pending', title: '⏳ Pending' },
-    { id: 'adm_tx_30', title: '💰 Last 30 Days' },
-    { id: 'adm_tx_90', title: '💰 Last 90 Days' }
-  ]);
-}
-
-function sendMerchantDashboard(to: string, merchant: any) {
-  return sendButtons(to, `🏪 *${merchant.trading_name}*`, [
-    { id: 'm_orders', title: '📦 Orders' },
-    { id: 'm_location', title: '📍 Update Location' }
-  ]);
+async function routeToDashboard(to: string, mode: Mode, merchant?: any) {
+    if (mode === Mode.ADMIN) return sendButtons(to, "💎 Admin", [{id: 'adm_gen_payouts', title: '🧾 Payouts'}]);
+    if (mode === Mode.MERCHANT) {
+        return sendButtons(to, `🏪 *${merchant?.trading_name}*`, [
+            { id: 'm_products', title: '📦 Inventory' },
+            { id: 'm_payout', title: '💰 Payout' },
+            { id: 'm_settings', title: '⚙️ Settings' }
+        ]);
+    }
+    return sendTextMessage(to, "Mode: *Customer View* 🛒");
 }

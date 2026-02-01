@@ -24,35 +24,109 @@ enum MerchantStatus {
 enum OrderStatus {
   PENDING
   PAID
+  READY_FOR_PICKUP
   COMPLETED
+  REFUNDED
   CANCELLED
 }
 
 model UserSession {
-  id        Int      @id @default(autoincrement())
-  wa_id     String   @unique
-  mode      Mode     @default(CUSTOMER)
-  updatedAt DateTime @default(now()) @updatedAt
+  id              Int      @id @default(autoincrement())
+  wa_id           String   @unique
+  mode            Mode     @default(CUSTOMER)
+  active_prod_id  String?  
+  active_order_id String?  
+  reporting_mid   String?  
+  updatedAt       DateTime @default(now()) @updatedAt
 }
 
 model Merchant {
-  id           String         @id @default(cuid())
-  wa_id        String         @unique
-  trading_name String?
-  status       MerchantStatus @default(PENDING)
-  latitude     Float?
-  longitude    Float?
-  orders       Order[]
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
+  id                String         @id @default(cuid())
+  wa_id             String         @unique
+  trading_name      String?
+  legal_entity_name String?        
+  id_number         String?        
+  id_photo_url      String?        
+  bank_name         String?
+  bank_acc_no       String?
+  bank_type         String?        
+  accepted_terms    Boolean        @default(false)
+  status            MerchantStatus @default(PENDING)
+  latitude          Float?
+  longitude         Float?
+  products          Product[]
+  orders            Order[]
+  followers         Follower[]
+  refundLogs        RefundLog[]
+  reports           Report[]       
+  hours             OperatingHours?
+  total_fees_due    Float          @default(0.0)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+}
+
+model Report {
+  id          String   @id @default(cuid())
+  customer_id String   
+  reason      String
+  merchant    Merchant @relation(fields: [merchant_id], references: [id])
+  merchant_id String
+  createdAt   DateTime @default(now())
+}
+
+model OperatingHours {
+  id          String   @id @default(cuid())
+  mon_fri     String   @default("09:00-17:00")
+  sat         String   @default("09:00-13:00")
+  sun         String   @default("Closed")
+  merchant    Merchant @relation(fields: [merchant_id], references: [id])
+  merchant_id String   @unique
+}
+
+model Product {
+  id           String   @id @default(cuid())
+  name         String
+  price        Float
+  image_url    String?
+  is_in_stock  Boolean  @default(true)
+  stock_count  Int      @default(0)
+  merchant     Merchant @relation(fields: [merchant_id], references: [id])
+  merchant_id  String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Follower {
+  id          String   @id @default(cuid())
+  wa_id       String   
+  merchant    Merchant @relation(fields: [merchant_id], references: [id])
+  merchant_id String
+  createdAt   DateTime @default(now())
+
+  @@unique([wa_id, merchant_id])
 }
 
 model Order {
-  id          String      @id @default(cuid())
-  amount      Float
-  status      OrderStatus @default(PENDING)
-  customer_id String      
-  merchant    Merchant    @relation(fields: [merchant_id], references: [id])
-  merchant_id String
-  createdAt   DateTime    @default(now())
+  id            String      @id @default(cuid())
+  amount        Float
+  status        OrderStatus @default(PENDING)
+  customer_id   String      
+  merchant      Merchant    @relation(fields: [merchant_id], references: [id])
+  merchant_id   String
+  details       Json?       
+  is_payout_set Boolean     @default(false) 
+  createdAt     DateTime    @default(now())
+  RefundLog     RefundLog?
+}
+
+model RefundLog {
+  id             String   @id @default(cuid())
+  order          Order    @relation(fields: [order_id], references: [id])
+  order_id       String   @unique
+  merchant       Merchant @relation(fields: [merchant_id], references: [id])
+  merchant_id    String
+  refund_amount  Float
+  gateway_fee    Float    @default(0.0)
+  reason         String?
+  createdAt      DateTime @default(now())
 }
