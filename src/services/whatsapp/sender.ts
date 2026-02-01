@@ -1,12 +1,9 @@
 import fetch from 'node-fetch';
 
-// Using v2 Cloud API endpoint
 const API_URL = 'https://waba-v2.360dialog.io/messages';
 const API_KEY = process.env.WHATSAPP_API_KEY;
 
 export const sendTextMessage = async (to: string, text: string) => {
-  console.log(`Outgoing attempt to ${to}: ${text}`);
-
   try {
     const response = await fetch(API_URL, {
       method: 'POST',
@@ -24,13 +21,11 @@ export const sendTextMessage = async (to: string, text: string) => {
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      console.error("❌ 360Dialog Error Details:", JSON.stringify(errorData, null, 2));
-    } else {
-      console.log("✅ Message sent successfully");
+      const error = await response.json();
+      console.error("❌ 360Dialog Send Error:", JSON.stringify(error));
     }
   } catch (err) {
-    console.error("❌ Network error sending to 360Dialog:", err);
+    console.error("❌ Network error in sender:", err);
   }
 };
 
@@ -61,10 +56,10 @@ export const sendButtons = async (to: string, text: string, buttons: { id: strin
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      console.error("❌ 360Dialog Button Error:", JSON.stringify(errorData, null, 2));
+      const error = await response.json();
+      console.error("❌ 360Dialog Button Error:", JSON.stringify(error));
     }
   } catch (err) {
-    console.error("❌ Network error sending buttons:", err);
+    console.error("❌ Network error in button sender:", err);
   }
 };
