@@ -14,7 +14,6 @@ export async function handleIncomingMessage(body: any): Promise<void> {
 
     const userState = await prisma.userState.findUnique({ where: { phoneNumber: from } });
 
-    // --- HELPER: STORE MANAGEMENT MENU ---
     const showManagementMenu = async (phoneNumber: string): Promise<void> => {
       const business = await prisma.business.findUnique({ 
         where: { ownerPhone: phoneNumber },
@@ -34,8 +33,25 @@ export async function handleIncomingMessage(body: any): Promise<void> {
       await sendTextMessage(phoneNumber, menu);
     };
 
-    // --- PRODUCT ADDITION FLOW ---
+    // --- GLOBAL ACTIONS: DELETE ---
+    if (text.toUpperCase().startsWith('DELETE ')) {
+      const productId = text.split(' ')[1];
+      const business = await prisma.business.findUnique({ where: { ownerPhone: from } });
+      const product = await prisma.product.findFirst({
+        where: { id: productId, businessId: business?.id }
+      });
 
+      if (product) {
+        await prisma.product.delete({ where: { id: productId } });
+        await sendTextMessage(from, `🗑️ Removed: ${product.name}`);
+      } else {
+        await sendTextMessage(from, "❌ Product not found.");
+      }
+      await showManagementMenu(from);
+      return;
+    }
+
+    // --- PRODUCT ADDITION FLOW (WITH PREVIEW) ---
     if (userState?.state === 'AWAITING_PRODUCT_NAME') {
       await prisma.userState.update({
         where: { phoneNumber: from },
@@ -51,42 +67,38 @@ export async function handleIncomingMessage(body: any): Promise<void> {
         where: { phoneNumber: from },
         data: { state: 'AWAITING_PRODUCT_PRICE', data: { ...data, desc: text } }
       });
-      await sendTextMessage(from, "💰 Enter the price in Rands (e.g., 150):");
+      await sendTextMessage(from, "💰 Price in Rands (e.g., 150):");
       return;
     }
 
     if (userState?.state === 'AWAITING_PRODUCT_PRICE') {
       const price = parseFloat(text.replace(/[^0-9.]/g, ''));
       if (isNaN(price)) {
-        await sendTextMessage(from, "❌ Invalid price. Use numbers only:");
+        await sendTextMessage(from, "❌ Use numbers only:");
         return;
       }
-      
       const data = userState.data as any;
       await prisma.userState.update({
         where: { phoneNumber: from },
         data: { state: 'AWAITING_PRODUCT_IMAGE', data: { ...data, price } }
       });
-      await sendTextMessage(from, "📸 Please upload an image of the product:");
+      await sendTextMessage(from, "📸 Upload a product image:");
       return;
     }
 
     if (userState?.state === 'AWAITING_PRODUCT_IMAGE') {
       if (!imageId) {
-        await sendTextMessage(from, "❌ Please upload an image to continue:");
+        await sendTextMessage(from, "❌ Please upload an image:");
         return;
       }
-      
       const data = userState.data as any;
       const previewCaption = `👀 *BUYER PREVIEW*\n\n*${data.name}*\n${data.desc}\n\nPrice: *R${data.price}*`;
-      
       await sendImageMessage(from, imageId, previewCaption);
-
       await prisma.userState.update({
         where: { phoneNumber: from },
         data: { state: 'CONFIRMING_PRODUCT', data: { ...data, imageHandle: imageId } }
       });
-      await sendTextMessage(from, "Does this look correct?\n\n✅ Reply *YES* to add\n❌ Reply *NO* to cancel");
+      await sendTextMessage(from, "Does this look correct?\n\n✅ Reply *YES*\n❌ Reply *NO*");
       return;
     }
 
@@ -94,43 +106,32 @@ export async function handleIncomingMessage(body: any): Promise<void> {
       if (text.toUpperCase() === 'YES') {
         const data = userState.data as any;
         const biz = await prisma.business.findUnique({ where: { ownerPhone: from } });
-        
         await prisma.product.create({
           data: {
-            name: data.name,
-            description: data.desc,
-            price: data.price,
-            imageHandle: data.imageHandle,
+            name: data.name, description: data.desc,
+            price: data.price, imageHandle: data.imageHandle,
             businessId: biz!.id
           }
         });
-        await sendTextMessage(from, "✅ Success! Product live.");
-      } else {
-        await sendTextMessage(from, "❌ Cancelled.");
+        await sendTextMessage(from, "✅ Product live!");
       }
-      
       await prisma.userState.delete({ where: { phoneNumber: from } });
       await showManagementMenu(from);
       return;
     }
 
-    // --- MAIN NAVIGATION ---
+    // --- MAIN NAVIGATION (CRASH FIXED HERE) ---
     if (text === '1') {
       const business = await prisma.business.findUnique({ where: { ownerPhone: from } });
-      if (!business) {
-        await prisma.userState.upsert({
-          where: { phoneNumber: from },
-          update: { state: 'AWAITING_NAME' },
-          create: { phoneNumber: from, state: 'AWAITING_NAME' }
-        });
-        await sendTextMessage(from, "🏪 What is your store name?");
-      } else {
-        await prisma.userState.update({
-          where: { phoneNumber: from },
-          data: { state: 'AWAITING_PRODUCT_NAME' }
-        });
-        await sendTextMessage(from, "🛒 Product name:");
-      }
+      
+      // We use UPSERT to ensure the record exists before we try to update it later
+      await prisma.userState.upsert({
+        where: { phoneNumber: from },
+        update: { state: business ? 'AWAITING_PRODUCT_NAME' : 'AWAITING_NAME', data: {} },
+        create: { phoneNumber: from, state: business ? 'AWAITING_PRODUCT_NAME' : 'AWAITING_NAME', data: {} }
+      });
+
+      await sendTextMessage(from, business ? "🛒 Product name:" : "🏪 Store name:");
       return;
     }
 
@@ -141,16 +142,13 @@ export async function handleIncomingMessage(body: any): Promise<void> {
       });
 
       if (!business || business.products.length === 0) {
-        await sendTextMessage(from, "Your catalog is empty!");
+        await sendTextMessage(from, "Catalog empty!");
       } else {
-        await sendTextMessage(from, `📦 *${business.name} Catalog*:`);
         for (const product of business.products) {
-          const caption = `*${product.name}*\n${product.description}\nPrice: *R${product.price}*`;
-          if (product.imageHandle) {
-            await sendImageMessage(from, product.imageHandle, caption);
-          } else {
-            await sendTextMessage(from, caption);
-          }
+          const caption = `*${product.name}*\nPrice: *R${product.price}*\n\n🗑️ Reply "DELETE ${product.id}"`;
+          product.imageHandle 
+            ? await sendImageMessage(from, product.imageHandle, caption) 
+            : await sendTextMessage(from, caption);
         }
       }
       await showManagementMenu(from);
