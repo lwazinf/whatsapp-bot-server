@@ -11,29 +11,23 @@ const whatsappClient = axios.create({
   },
 });
 
-/**
- * STEP 1: Can we send "Hi"?
- */
 export async function sendTextMessage(to: string, body: string) {
-  console.log("📤 STEP 1: Testing single word");
-  console.log("🔑 Using API Key:", API_KEY?.substring(0, 10) + "...");
+  console.log("📤 Sending WhatsApp message to:", to);
   
   const response = await whatsappClient.post("", {
+    messaging_product: "whatsapp", // ✅ Added fix for 400 error
+    recipient_type: "individual",
     to,
     type: "text",
-    text: { body: "Hi" }
+    text: { body }
   });
   
-  console.log("✅ STEP 1 SUCCESS:", response.data);
+  console.log("✅ Success:", response.data);
   return response.data;
 }
 
-export async function sendTemplateMessage(
-  to: string,
-  templateName: string,
-  languageCode = "en"
-) {
-  const payload = {
+export async function sendTemplateMessage(to: string, templateName: string, languageCode = "en") {
+  return await whatsappClient.post("", {
     messaging_product: "whatsapp",
     to,
     type: "template",
@@ -41,6 +35,5 @@ export async function sendTemplateMessage(
       name: templateName,
       language: { code: languageCode },
     },
-  };
-  return await whatsappClient.post("", payload);
+  });
 }
