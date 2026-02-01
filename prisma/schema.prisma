@@ -3,13 +3,13 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql" // or "mysql" depending on your Railway DB
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
 model Business {
   id          String   @id @default(nanoid())
-  ownerPhone  String   @unique  // <--- Make sure this is exactly "ownerPhone"
+  ownerPhone  String   @unique
   name        String
   category    String?
   createdAt   DateTime @default(now())
@@ -19,16 +19,18 @@ model Business {
 model Product {
   id          String   @id @default(nanoid())
   name        String
-  price       Float
-  description String?
+  price       Float    // Representing ZAR/Rands
+  description String?  // New: For individual product details
+  imageHandle String?  // New: To store the WhatsApp Media ID or URL
   businessId  String
   business    Business @relation(fields: [businessId], references: [id])
+  createdAt   DateTime @default(now()) // New: For tracking daily trends
 }
 
-// For tracking user progress in the chat
+// For tracking user progress in the chat state machine
 model UserState {
   phoneNumber String   @id
-  state       String   // e.g., "AWAITING_BUSINESS_NAME", "AWAITING_PRICE"
-  data        Json?    // Temporary storage for incomplete forms
+  state       String   // e.g., "AWAITING_PRODUCT_IMAGE", "CONFIRMING_PRODUCT"
+  data        Json?    // Temporary storage for multi-step form data
   updatedAt   DateTime @updatedAt
 }
