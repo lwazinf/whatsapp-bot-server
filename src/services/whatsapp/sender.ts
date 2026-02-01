@@ -4,7 +4,7 @@ export async function sendImageMessage(to: string, mediaId: string, caption: str
     const response = await fetch(url, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${process.env.WHATSAPP_API_KEY}`,
+        'Authorization': `Bearer ${process.env.WHATSAPP_API_KEY?.trim()}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
@@ -28,7 +28,7 @@ export async function sendTextMessage(to: string, text: string) {
     const response = await fetch(url, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${process.env.WHATSAPP_API_KEY}`,
+        'Authorization': `Bearer ${process.env.WHATSAPP_API_KEY?.trim()}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
