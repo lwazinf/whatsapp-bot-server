@@ -4,10 +4,7 @@ import { sendTextMessage, sendButtons } from './sender';
 const db = new PrismaClient();
 
 /**
- * Utility to check if a merchant is currently open based on strict rules:
- * Mon-Fri: 09:00 - 17:00
- * Sat: 10:00 - 15:00
- * Sun: CLOSED
+ * Enhanced Utility: Checks day-specific hours from the DB
  */
 export const isMerchantOpen = (merchant: any): boolean => {
     const now = new Date();
@@ -16,16 +13,14 @@ export const isMerchantOpen = (merchant: any): boolean => {
     const time = localTime.getUTCHours().toString().padStart(2, '0') + ":" + 
                  localTime.getUTCMinutes().toString().padStart(2, '0');
 
-    if (day === 0) return false; 
+    if (day === 0) return merchant.sun_open; // Uses DB preference for Sunday
 
-    const open = merchant.open_time;
-    const close = merchant.close_time;
-
-    if (day === 6 && open === "09:00") {
-        return time >= "10:00" && time <= "15:00";
+    if (day === 6) {
+        return time >= merchant.sat_open_time && time <= merchant.sat_close_time;
     }
 
-    return time >= open && time <= close;
+    // Mon-Fri
+    return time >= merchant.open_time && time <= merchant.close_time;
 };
 
 export const handleMerchantAction = async (from: string, input: string, session: any, merchant: any, message?: any) => {
@@ -59,71 +54,90 @@ export const handleMerchantAction = async (from: string, input: string, session:
         const oid = input.replace('ready_', '');
         const order = await db.order.update({ where: { id: oid }, data: { status: OrderStatus.READY_FOR_PICKUP } });
         await sendTextMessage(order.customer_id, `🛍️ *Order Ready!* Your order from *${merchant.trading_name}* is ready.`);
-        return sendTextMessage(from, "✅ Customer notified.");
+        await sendTextMessage(from, "✅ Customer notified.");
+        return showMerchantDashboard(from, merchant); // UX: Back to menu
     }
 
     if (input.startsWith('collected_')) {
         const oid = input.replace('collected_', '');
         await db.order.update({ where: { id: oid }, data: { status: OrderStatus.COMPLETED } });
-        return sendTextMessage(from, "🏁 Order completed.");
+        await sendTextMessage(from, "🏁 Order completed.");
+        return showMerchantDashboard(from, merchant); // UX: Back to menu
     }
 
-    // --- 2. OPERATING HOURS (4-BUTTON LOGIC) ---
-    if (input === 'm_edit_hours') {
+    // --- 2. OPERATING HOURS ---
+    if (input === 'm_edit_hours' || input === 'h_cancel') {
         const currentHours = `⏰ *Trading Hours Settings*\n\n` +
-                             `📅 Mon-Fri: 09:00 - 17:00\n` +
-                             `📅 Sat: 10:00 - 15:00\n` +
-                             `🚫 Sun: CLOSED`;
+                             `📅 Mon-Fri: ${merchant.open_time} - ${merchant.close_time}\n` +
+                             `📅 Sat: ${merchant.sat_open_time} - ${merchant.sat_close_time}\n` +
+                             `🚫 Sun: ${merchant.sun_open ? 'OPEN' : 'CLOSED'}`;
         
+        await db.userSession.update({ where: { wa_id: from }, data: { active_prod_id: null } });
         return sendButtons(from, currentHours, [
             { id: 'h_set_default', title: '✅ Use Standard' },
             { id: 'h_custom_menu', title: '✏️ Custom Hours' }
         ]);
     }
 
-    // Standard Default Action
     if (input === 'h_set_default') {
-        await db.merchant.update({
+        const updated = await db.merchant.update({
             where: { id: merchant.id },
-            data: { open_time: "09:00", close_time: "17:00" }
+            data: { 
+                open_time: "09:00", close_time: "17:00",
+                sat_open_time: "10:00", sat_close_time: "15:00",
+                sun_open: false
+            }
         });
-        return sendTextMessage(from, "✅ *Standard Hours Applied.*");
+        await sendTextMessage(from, "✅ *Standard Hours Applied.*");
+        return showMerchantDashboard(from, updated);
     }
 
-    // Custom Hours Menu (The 4 Options Request)
-    // Note: WhatsApp buttons are limited to 3 per message. 
-    // We send the primary options first, and handle Sun/Cancel via text/logic or a second button set.
     if (input === 'h_custom_menu') {
-        return sendButtons(from, "Which day would you like to set custom hours for?", [
-            { id: 'h_custom_mf', title: 'Mon - Fri' },
-            { id: 'h_custom_sat', title: 'Sat' },
-            { id: 'h_custom_sun', title: 'Sun (Closed)' }
-            // 'Cancel' is handled by simply typing 'hi' or ignoring, but for 4 buttons we use a List or 2nd msg
+        // Sending the first 3 options
+        await sendButtons(from, "Select day to edit:", [
+            { id: 'h_custom_mf', title: '📅 Mon - Fri' },
+            { id: 'h_custom_sat', title: '📅 Sat' },
+            { id: 'h_custom_sun', title: '📅 Sun' }
+        ]);
+        // Sending the cancel/back option separately to bypass the 3-button limit
+        return sendButtons(from, "Or go back:", [
+            { id: 'h_cancel', title: '❌ Cancel' }
         ]);
     }
 
     if (input === 'h_custom_sun') {
-        return sendTextMessage(from, "🚫 *Sundays are strictly CLOSED* to comply with campus policy.");
+        const updated = await db.merchant.update({
+            where: { id: merchant.id },
+            data: { sun_open: !merchant.sun_open }
+        });
+        await sendTextMessage(from, `📅 Sunday is now: *${updated.sun_open ? 'OPEN' : 'CLOSED'}*`);
+        return showMerchantDashboard(from, updated);
     }
 
     if (input === 'h_custom_mf' || input === 'h_custom_sat') {
-        const dayLabel = input.includes('mf') ? 'Mon-Fri' : 'Saturday';
+        const dayLabel = input.includes('mf') ? 'Weekday' : 'Saturday';
         await db.userSession.update({ 
             where: { wa_id: from }, 
-            data: { active_prod_id: `HOURS_${dayLabel}` } 
+            data: { active_prod_id: `HOURS_${dayLabel.toUpperCase()}` } 
         });
         return sendTextMessage(from, `✏️ Enter hours for *${dayLabel}* (24h format):\n*HH:MM - HH:MM*`);
     }
 
-    // Process the text input for hours
     if (session.active_prod_id?.startsWith('HOURS_')) {
         const hoursRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]\s?-\s?([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
-        if (!hoursRegex.test(input)) return sendTextMessage(from, "❌ Invalid format. Use *HH:MM - HH:MM*");
+        if (!hoursRegex.test(input)) return sendTextMessage(from, "❌ Format: *HH:MM - HH:MM*");
         
         const [open, close] = input.split('-').map(s => s.trim());
-        await db.merchant.update({ where: { id: merchant.id }, data: { open_time: open, close_time: close } });
+        const isSat = session.active_prod_id.includes('SATURDAY');
+        
+        const updated = await db.merchant.update({ 
+            where: { id: merchant.id }, 
+            data: isSat ? { sat_open_time: open, sat_close_time: close } : { open_time: open, close_time: close }
+        });
+
         await db.userSession.update({ where: { wa_id: from }, data: { active_prod_id: null } });
-        return sendTextMessage(from, `✅ Hours updated to *${open} - ${close}*`);
+        await sendTextMessage(from, `✅ ${isSat ? 'Saturday' : 'Weekday'} hours updated!`);
+        return showMerchantDashboard(from, updated);
     }
 
     // --- 3. PRODUCT CREATION ---
@@ -156,7 +170,8 @@ export const handleMerchantAction = async (from: string, input: string, session:
         const pid = input.replace('conf_live_', '');
         await db.product.update({ where: { id: pid }, data: { is_in_stock: true } });
         await db.userSession.update({ where: { wa_id: from }, data: { active_prod_id: null } });
-        return sendTextMessage(from, "✅ Product is now LIVE!");
+        await sendTextMessage(from, "✅ Product is now LIVE!");
+        return showMerchantDashboard(from, merchant);
     }
 
     // --- 4. EDIT/DELETE ---
@@ -181,7 +196,8 @@ export const handleMerchantAction = async (from: string, input: string, session:
     if (input.startsWith('delete_prod_')) {
         const pid = input.replace('delete_prod_', '');
         await db.product.delete({ where: { id: pid } });
-        return sendTextMessage(from, "🗑️ Deleted.");
+        await sendTextMessage(from, "🗑️ Deleted.");
+        return showMerchantDashboard(from, merchant);
     }
 
     // --- 5. INVENTORY ---
@@ -199,7 +215,8 @@ export const handleMerchantAction = async (from: string, input: string, session:
         const pid = input.replace('toggle_', '');
         const p = await db.product.findUnique({ where: { id: pid } });
         await db.product.update({ where: { id: pid }, data: { is_in_stock: !p?.is_in_stock } });
-        return sendTextMessage(from, "🔄 Stock updated.");
+        await sendTextMessage(from, "🔄 Stock updated.");
+        return showMerchantDashboard(from, merchant);
     }
 
     return showMerchantDashboard(from, merchant);
@@ -207,7 +224,9 @@ export const handleMerchantAction = async (from: string, input: string, session:
 
 export const showMerchantDashboard = async (to: string, merchant: any) => {
     const status = isMerchantOpen(merchant) ? "🟢 OPEN" : "🔴 CLOSED";
-    return sendButtons(to, `🏪 *${merchant.trading_name}*\nStatus: ${status}\n⏰ ${merchant.open_time} - ${merchant.close_time}`, [
+    const hoursStr = `⏰ Mon-Fri: ${merchant.open_time}-${merchant.close_time}\n⏰ Sat: ${merchant.sat_open_time}-${merchant.sat_close_time}`;
+    
+    return sendButtons(to, `🏪 *${merchant.trading_name}*\nStatus: ${status}\n${hoursStr}`, [
         { id: 'm_kitchen', title: '🍳 Kitchen View' },
         { id: 'm_edit_menu', title: '✏️ Edit Items' },
         { id: 'm_edit_hours', title: '⏰ Set Hours' }

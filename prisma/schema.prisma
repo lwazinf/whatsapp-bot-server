@@ -51,9 +51,12 @@ model Merchant {
   id_number         String?
   status            MerchantStatus @default(PENDING)
   
-  // Operating Hours
-  open_time         String         @default("08:00")
-  close_time        String         @default("17:00")
+  // Operating Hours (Updated to prevent logic collisions)
+  open_time         String         @default("09:00") // Mon-Fri Open
+  close_time        String         @default("17:00") // Mon-Fri Close
+  sat_open_time     String         @default("10:00") // Saturday Open
+  sat_close_time    String         @default("15:00") // Saturday Close
+  sun_open          Boolean        @default(false)   // Sunday Toggle (Default Closed)
   
   // Banking
   bank_name         String?
