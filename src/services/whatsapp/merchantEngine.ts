@@ -11,18 +11,16 @@ const db = new PrismaClient();
  */
 export const isMerchantOpen = (merchant: any): boolean => {
     const now = new Date();
-    // Adjust for South African Time (SAST is UTC+2)
     const localTime = new Date(now.getTime() + (2 * 60 * 60 * 1000));
-    const day = localTime.getUTCDay(); // 0 = Sunday, 6 = Saturday
+    const day = localTime.getUTCDay(); 
     const time = localTime.getUTCHours().toString().padStart(2, '0') + ":" + 
                  localTime.getUTCMinutes().toString().padStart(2, '0');
 
-    if (day === 0) return false; // Sunday is always closed
+    if (day === 0) return false; 
 
     const open = merchant.open_time;
     const close = merchant.close_time;
 
-    // Check specific Saturday rules if they are using defaults
     if (day === 6 && open === "09:00") {
         return time >= "10:00" && time <= "15:00";
     }
@@ -56,7 +54,7 @@ export const handleMerchantAction = async (from: string, input: string, session:
         return;
     }
 
-    // FULFILLMENT
+    // FULFILLMENT ACTIONS
     if (input.startsWith('ready_')) {
         const oid = input.replace('ready_', '');
         const order = await db.order.update({ where: { id: oid }, data: { status: OrderStatus.READY_FOR_PICKUP } });
@@ -70,41 +68,62 @@ export const handleMerchantAction = async (from: string, input: string, session:
         return sendTextMessage(from, "🏁 Order completed.");
     }
 
-    // --- 2. OPERATING HOURS (Strict Rules) ---
+    // --- 2. OPERATING HOURS (4-BUTTON LOGIC) ---
     if (input === 'm_edit_hours') {
-        const currentHours = `⏰ *Current Trading Hours:*\n\n` +
+        const currentHours = `⏰ *Trading Hours Settings*\n\n` +
                              `📅 Mon-Fri: 09:00 - 17:00\n` +
                              `📅 Sat: 10:00 - 15:00\n` +
-                             `🚫 Sun: CLOSED\n\n` +
-                             `Your current setting: *${merchant.open_time} - ${merchant.close_time}*`;
+                             `🚫 Sun: CLOSED`;
         
         return sendButtons(from, currentHours, [
             { id: 'h_set_default', title: '✅ Use Standard' },
-            { id: 'h_set_custom', title: '✏️ Enter Custom' }
+            { id: 'h_custom_menu', title: '✏️ Custom Hours' }
         ]);
     }
 
+    // Standard Default Action
     if (input === 'h_set_default') {
         await db.merchant.update({
             where: { id: merchant.id },
             data: { open_time: "09:00", close_time: "17:00" }
         });
-        return sendTextMessage(from, "✅ *Standard Hours Applied:*\nMon-Fri: 09:00-17:00\nSat: 10:00-15:00\nSun: Closed");
+        return sendTextMessage(from, "✅ *Standard Hours Applied.*");
     }
 
-    if (input === 'h_set_custom') {
-        await db.userSession.update({ where: { wa_id: from }, data: { active_prod_id: 'EDIT_HOURS' } });
-        return sendTextMessage(from, "Please enter custom hours (24h format):\n*HH:MM - HH:MM*");
+    // Custom Hours Menu (The 4 Options Request)
+    // Note: WhatsApp buttons are limited to 3 per message. 
+    // We send the primary options first, and handle Sun/Cancel via text/logic or a second button set.
+    if (input === 'h_custom_menu') {
+        return sendButtons(from, "Which day would you like to set custom hours for?", [
+            { id: 'h_custom_mf', title: 'Mon - Fri' },
+            { id: 'h_custom_sat', title: 'Sat' },
+            { id: 'h_custom_sun', title: 'Sun (Closed)' }
+            // 'Cancel' is handled by simply typing 'hi' or ignoring, but for 4 buttons we use a List or 2nd msg
+        ]);
     }
 
-    if (session.active_prod_id === 'EDIT_HOURS') {
+    if (input === 'h_custom_sun') {
+        return sendTextMessage(from, "🚫 *Sundays are strictly CLOSED* to comply with campus policy.");
+    }
+
+    if (input === 'h_custom_mf' || input === 'h_custom_sat') {
+        const dayLabel = input.includes('mf') ? 'Mon-Fri' : 'Saturday';
+        await db.userSession.update({ 
+            where: { wa_id: from }, 
+            data: { active_prod_id: `HOURS_${dayLabel}` } 
+        });
+        return sendTextMessage(from, `✏️ Enter hours for *${dayLabel}* (24h format):\n*HH:MM - HH:MM*`);
+    }
+
+    // Process the text input for hours
+    if (session.active_prod_id?.startsWith('HOURS_')) {
         const hoursRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]\s?-\s?([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
-        if (!hoursRegex.test(input)) return sendTextMessage(from, "❌ Format: *HH:MM - HH:MM*");
+        if (!hoursRegex.test(input)) return sendTextMessage(from, "❌ Invalid format. Use *HH:MM - HH:MM*");
         
         const [open, close] = input.split('-').map(s => s.trim());
         await db.merchant.update({ where: { id: merchant.id }, data: { open_time: open, close_time: close } });
         await db.userSession.update({ where: { wa_id: from }, data: { active_prod_id: null } });
-        return sendTextMessage(from, `✅ Custom hours set: *${open} - ${close}*`);
+        return sendTextMessage(from, `✅ Hours updated to *${open} - ${close}*`);
     }
 
     // --- 3. PRODUCT CREATION ---
