@@ -15,7 +15,7 @@ const WEBHOOK_VERIFY_TOKEN = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
 // Validate required environment variables
 const requiredEnvVars = [
     'WHATSAPP_API_KEY',
-    'WHATSAPP_PHONE_ID',
+    'WHATSAPP_API_URL',
     'WHATSAPP_WEBHOOK_VERIFY_TOKEN',
     'DATABASE_URL'
 ];
