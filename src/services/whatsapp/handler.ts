@@ -1,75 +1,98 @@
-import { PrismaClient, Mode, MerchantStatus } from '@prisma/client';
-import { handleMerchantAction } from './merchantEngine';
-import { handleOnboardingAction } from './onboardingEngine';
+import { PrismaClient, MerchantStatus } from '@prisma/client';
 import { sendTextMessage, sendButtons } from './sender';
 
-const db = new PrismaClient();
-const ADMIN_NUMBER = "27746854339";
+// Prisma Singleton for Railway/Supabase connection pooling
+const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
+const db = globalForPrisma.prisma || new PrismaClient();
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db;
 
-export const handleIncomingMessage = async (webhookData: any) => {
-    const value = webhookData.entry?.[0]?.changes?.[0]?.value;
-    const message = value?.messages?.[0];
-    if (!message) return;
+export const handleIncomingMessage = async (message: any) => {
+    if (!message || !message.from) return;
 
     const from = message.from;
-    const input = message.interactive?.button_reply?.id || message.text?.body?.trim();
+    const textBody = message.text?.body;
+    const buttonId = message.interactive?.button_reply?.id;
+    const listId = message.interactive?.list_reply?.id;
+    const input = String(buttonId || listId || textBody || "").trim();
 
     try {
-        let session = await db.userSession.findUnique({ where: { wa_id: from } });
-        if (!session) {
-            session = await db.userSession.create({ data: { wa_id: from, mode: Mode.CUSTOMER } });
+        // 1. Session & Merchant Lookup
+        const session = await db.userSession.upsert({
+            where: { wa_id: from },
+            update: {},
+            create: { wa_id: from, mode: 'CUSTOMER' }
+        });
+
+        const merchant = await db.merchant.findUnique({
+            where: { wa_id: from }
+        });
+
+        console.log(`📩 [${session.mode}] ${from}: "${input}"`);
+
+        // 2. Global Commands
+        if (input.toLowerCase() === 'reset') {
+            await db.userSession.update({ where: { wa_id: from }, data: { mode: 'CUSTOMER' } });
+            return sendTextMessage(from, "🔄 Session reset to Customer mode.");
         }
-        
-        const merchant = await db.merchant.findUnique({ where: { wa_id: from } });
 
-        // LOGS FOR DEBUGGING (Check these in Railway)
-        console.log(`📩 New Message from ${from}: "${input}"`);
-        console.log(`👤 Session Mode: ${session.mode}`);
-        console.log(`🏬 Merchant Found: ${merchant ? merchant.trading_name : 'NO'}`);
+        // 3. Routing Logic
 
-        if (input === 'SwitchOmeru') {
-            if (from === ADMIN_NUMBER) {
-                return sendButtons(from, "🛠️ *Admin*", [
-                    { id: 'set_mode_ADMIN', title: '💎 Admin' },
-                    { id: 'set_mode_MERCHANT', title: '🏪 Merchant' },
-                    { id: 'set_mode_CUSTOMER', title: '🛍️ Customer' }
-                ]);
-            } else if (merchant?.status === MerchantStatus.ACTIVE) {
-                const next = session.mode === Mode.MERCHANT ? Mode.CUSTOMER : Mode.MERCHANT;
-                await db.userSession.update({ where: { wa_id: from }, data: { mode: next } });
-                return sendTextMessage(from, `🔄 Switched to: *${next}*`);
+        // --- REGISTRATION FLOW ---
+        if (session.mode === 'REGISTERING') {
+            if (input.length < 3) {
+                return sendTextMessage(from, "⚠️ Shop Name too short. Please send a valid name.");
             }
+
+            const cleanHandle = input.toLowerCase().replace(/\s+/g, '_').substring(0, 15);
+            
+            await db.merchant.upsert({
+                where: { wa_id: from },
+                create: {
+                    wa_id: from,
+                    trading_name: input,
+                    handle: `${cleanHandle}_${from.slice(-4)}`,
+                    status: MerchantStatus.ACTIVE
+                },
+                update: {
+                    trading_name: input,
+                    status: MerchantStatus.ACTIVE
+                }
+            });
+
+            await db.userSession.update({
+                where: { wa_id: from },
+                data: { mode: 'MERCHANT' }
+            });
+
+            return sendButtons(from, `🎉 *${input}* is now live on Omeru!`, [
+                { id: 'm_dashboard', title: '🏠 Dashboard' },
+                { id: 'reset', title: '🔄 Back to Customer' }
+            ]);
         }
 
-        if (input?.startsWith('set_mode_')) {
-            const selectedMode = input.replace('set_mode_', '') as Mode;
-            await db.userSession.update({ where: { wa_id: from }, data: { mode: selectedMode } });
-            return sendTextMessage(from, `✅ Mode set to: *${selectedMode}*`);
+        // --- MERCHANT DASHBOARD ---
+        if (session.mode === 'MERCHANT' && merchant) {
+            return sendButtons(from, `🏪 *Merchant Dashboard: ${merchant.trading_name}*\nStatus: Active ✅`, [
+                { id: 'm_inventory', title: '📦 Inventory' },
+                { id: 'm_orders', title: '📋 Orders' },
+                { id: 'reset', title: '🔄 Switch to Customer' }
+            ]);
         }
 
-        // ROUTING
-        if (session.mode === Mode.REGISTERING || (merchant && merchant.status !== MerchantStatus.ACTIVE)) {
-            return handleOnboardingAction(from, input, session, merchant);
+        // --- CUSTOMER WELCOME (Default) ---
+        if (input.toLowerCase() === 'sell' || input.toLowerCase() === 'register') {
+            await db.userSession.update({ where: { wa_id: from }, data: { mode: 'REGISTERING' } });
+            return sendTextMessage(from, "🏪 *Start Selling!*\n\nWhat is your **Shop Name**?");
         }
 
-        if (session.mode === Mode.MERCHANT) {
-            if (!merchant) {
-                // If mode is Merchant but no profile exists, reset them
-                await db.userSession.update({ where: { wa_id: from }, data: { mode: Mode.CUSTOMER } });
-                return sendTextMessage(from, "⚠️ Merchant profile missing. Reverted to Customer.");
-            }
-            return handleMerchantAction(from, input, session, merchant, message);
-        }
+        return sendButtons(from, "👋 *Welcome to Omeru*\n\nYour local marketplace. What would you like to do today?", [
+            { id: 'browse', title: '🛍️ Browse Shops' },
+            { id: 'sell', title: '🏪 Register Shop' },
+            { id: 'c_orders', title: '📦 My Orders' }
+        ]);
 
-        // DEFAULT CUSTOMER
-        if (input?.toLowerCase() === 'hi' || input === 'start') {
-            return sendTextMessage(from, "Welcome to Omeru! Type 'SwitchOmeru' to manage your shop.");
-        }
-
-    } catch (err: any) {
-        // THIS LOG IS CRITICAL - It tells us exactly why the system error happens
-        console.error("❌ CRITICAL HANDLER ERROR:", err.message);
-        console.error("Stack Trace:", err.stack);
-        return sendTextMessage(from, `⚠️ System Error: ${err.message}`);
+    } catch (err) {
+        console.error("❌ Handler Error:", err);
+        return sendTextMessage(from, "⚠️ System update in progress. Please try again in a moment.");
     }
 };
