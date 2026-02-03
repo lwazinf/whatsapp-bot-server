@@ -1,18 +1,11 @@
 generator client {
-  provider      = "prisma-client-js"
-  binaryTargets = ["native", "debian-openssl-3.0.x"]
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
-}
-
-enum MerchantStatus {
-  ONBOARDING
-  ACTIVE
-  SUSPENDED
 }
 
 enum OrderStatus {
@@ -23,10 +16,17 @@ enum OrderStatus {
   CANCELLED
 }
 
+enum MerchantStatus {
+  ONBOARDING
+  ACTIVE
+  SUSPENDED
+}
+
 model UserSession {
   id             String   @id @default(cuid())
   wa_id          String   @unique
-  mode           String   @default("CUSTOMER") // CUSTOMER, MERCHANT, REGISTERING
+  mode           String   @default("CUSTOMER")
+  state          String?
   active_prod_id String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -37,26 +37,22 @@ model Merchant {
   wa_id             String         @unique
   handle            String         @unique
   trading_name      String
-  
-  // Fields for Onboarding Engine
   legal_entity_name String?
   id_number         String?
+  description       String?
+  address           String?
+  image_url         String?
   bank_name         String?
   bank_acc_no       String?
   bank_type         String?
-  accepted_terms    Boolean        @default(false)
-  
-  description       String?
-  address           String?
-  
-  // Operating Hours
-  open_time         String         @default("09:00")
-  close_time        String         @default("17:00")
+  open_time         String         @default("08:00")
+  close_time        String         @default("18:00")
   sat_open_time     String         @default("10:00")
   sat_close_time    String         @default("15:00")
   sun_open          Boolean        @default(false)
-  
-  status            MerchantStatus @default(ONBOARDING)
+  manual_closed     Boolean        @default(false)
+  accepted_terms    Boolean        @default(false)
+  status            MerchantStatus @default(ACTIVE)
   products          Product[]
   orders            Order[]
   createdAt         DateTime       @default(now())
@@ -64,15 +60,18 @@ model Merchant {
 }
 
 model Product {
-  id          String   @id @default(cuid())
+  id          String      @id @default(cuid())
   merchant_id String
-  merchant    Merchant @relation(fields: [merchant_id], references: [id])
+  merchant    Merchant    @relation(fields: [merchant_id], references: [id])
   name        String
+  description String?
   price       Float
   image_url   String?
-  is_in_stock Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  is_in_stock Boolean     @default(true)
+  status      String      @default("ACTIVE")
+  order_items OrderItem[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
 }
 
 model Order {
@@ -80,9 +79,21 @@ model Order {
   customer_id   String
   merchant_id   String
   merchant      Merchant    @relation(fields: [merchant_id], references: [id])
-  amount        Float       @default(0)
+  total         Float
   items_summary String?
   status        OrderStatus @default(PENDING)
+  alert_count   Int         @default(0)
+  order_items   OrderItem[]
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
+}
+
+model OrderItem {
+  id         String  @id @default(cuid())
+  order_id   String
+  order      Order   @relation(fields: [order_id], references: [id])
+  product_id String
+  product    Product @relation(fields: [product_id], references: [id])
+  quantity   Int
+  price      Float
 }
