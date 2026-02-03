@@ -1,107 +1,35 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
-
-// --- ENUMS ---
-
-enum Mode {
-  CUSTOMER
-  MERCHANT
-  ADMIN
-  REGISTERING
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum MerchantStatus {
-  PENDING
+  ONBOARDING
   ACTIVE
-  OFFLINE
+  SUSPENDED
 }
-
-enum OrderStatus {
-  PAID
-  READY_FOR_PICKUP
-  COMPLETED
-  CANCELLED
-}
-
-// --- MODELS ---
 
 model UserSession {
-  id             String   @id @default(uuid())
+  id             String   @id @default(cuid())
   wa_id          String   @unique
-  mode           Mode     @default(CUSTOMER)
-  active_prod_id String?  // Stores temporary state like 'NAME_PENDING', 'EDIT_HOURS', or specific Product IDs
+  mode           String   @default("CUSTOMER")
+  active_prod_id String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 }
 
 model Merchant {
-  id                String         @id @default(uuid())
-  wa_id             String         @unique
-  trading_name      String?
-  legal_entity_name String?
-  id_number         String?
-  status            MerchantStatus @default(PENDING)
-  
-  // Operating Hours (Updated to prevent logic collisions)
-  open_time         String         @default("09:00") // Mon-Fri Open
-  close_time        String         @default("17:00") // Mon-Fri Close
-  sat_open_time     String         @default("10:00") // Saturday Open
-  sat_close_time    String         @default("15:00") // Saturday Close
-  sun_open          Boolean        @default(false)   // Sunday Toggle (Default Closed)
-  
-  // Banking
-  bank_name         String?
-  bank_acc_no       String?
-  bank_type         String?
-  
-  // Verification
-  accepted_terms    Boolean        @default(false)
-  total_fees_due    Float          @default(0.0)
-  
-  // Relations
-  products          Product[]
-  orders            Order[]
-  
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
-}
-
-model Product {
-  id          String   @id @default(uuid())
-  name        String
-  price       Float
-  image_url   String?  // Stores the WhatsApp Media ID
-  is_in_stock Boolean  @default(true)
-  
-  // Relations
-  merchant_id String
-  merchant    Merchant @relation(fields: [merchant_id], references: [id], onDelete: Cascade)
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-}
-
-model Order {
-  id            String      @id @default(uuid())
-  customer_id   String      // The wa_id of the student/buyer
-  amount        Float       // Total value of the order
-  status        OrderStatus @default(PAID)
-  items_summary String      // Text description of items (e.g., "2x Burger, 1x Coke")
-  is_payout_set Boolean     @default(false) // Whether this order has been settled to the merchant
-  
-  // Relations
-  merchant_id   String
-  merchant      Merchant    @relation(fields: [merchant_id], references: [id])
-  
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  id           String         @id @default(cuid())
+  wa_id        String         @unique
+  handle       String         @unique
+  trading_name String
+  status       MerchantStatus @default(ONBOARDING)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
 }
