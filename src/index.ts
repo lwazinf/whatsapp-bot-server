@@ -192,10 +192,10 @@ const staleOrderJob = cron.schedule('*/5 * * * *', async () => {
     } catch (error: any) {
         console.error('❌ Stale order check failed:', error.message);
     }
-}, {
-    scheduled: true,
-    timezone: 'Africa/Johannesburg'
 });
+
+// Set timezone for cron (handled by server timezone)
+// Note: node-cron runs in server timezone by default
 
 // ============ GRACEFUL SHUTDOWN ============
 
