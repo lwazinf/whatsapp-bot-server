@@ -1,11 +1,10 @@
-import { PrismaClient, Mode, MerchantStatus } from '@prisma/client';
+import { PrismaClient, MerchantStatus } from '@prisma/client';
 import { sendTextMessage, sendButtons } from './sender';
 
 const db = new PrismaClient();
 
 /**
  * Handles the multi-step registration flow for merchants.
- * Optimized with Operating Hours and validation logic.
  */
 export const handleOnboardingAction = async (from: string, input: string, session: any, merchant: any) => {
     
@@ -48,7 +47,6 @@ export const handleOnboardingAction = async (from: string, input: string, sessio
             }
         });
 
-        // --- NEW STEP: OPERATING HOURS SELECTION ---
         return sendButtons(from, "⏰ *Step 5: Operating Hours*\nStudents need to know when you are open. Default is **08:00 - 17:00**.", [
             { id: 'ob_hours_def', title: '✅ Use Defaults' },
             { id: 'ob_hours_cust', title: '✏️ Set Custom' }
@@ -62,7 +60,6 @@ export const handleOnboardingAction = async (from: string, input: string, sessio
     }
 
     if (input === 'ob_hours_cust') {
-        // Use active_prod_id as a temporary state holder for custom hours
         await db.userSession.update({ where: { wa_id: from }, data: { active_prod_id: 'SET_HOURS' } });
         return sendTextMessage(from, "Please enter your hours in 24h format: *HH:MM - HH:MM*\n\nExample: *09:00 - 21:00*");
     }
@@ -91,7 +88,7 @@ export const handleOnboardingAction = async (from: string, input: string, sessio
 
         await db.userSession.update({
             where: { wa_id: from },
-            data: { mode: Mode.MERCHANT }
+            data: { mode: 'MERCHANT' }
         });
 
         return sendButtons(from, `🎊 *CONGRATULATIONS!*\n\nYour shop **${merchant.trading_name}** is now ACTIVE.`, [
@@ -101,13 +98,11 @@ export const handleOnboardingAction = async (from: string, input: string, sessio
     }
 
     if (input === 'ob_cancel') {
-        return sendTextMessage(from, "Registration paused. You can restart by typing 'Hi'.");
+        await db.userSession.update({ where: { wa_id: from }, data: { mode: 'CUSTOMER' } });
+        return sendTextMessage(from, "Registration paused. You've been returned to Customer mode.");
     }
 };
 
-/**
- * Reusable helper to send the Merchant Agreement
- */
 const sendLegalAgreement = (to: string) => {
     const agreement = `📜 *OMERU MERCHANT TERMS*\n\n` +
                       `1. **Fees:** 7% platform fee on sales.\n` +

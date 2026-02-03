@@ -1,4 +1,4 @@
-import { PrismaClient, OrderStatus, Mode } from '@prisma/client';
+import { PrismaClient, OrderStatus, MerchantStatus } from '@prisma/client';
 import { sendTextMessage, sendButtons } from './sender';
 
 const db = new PrismaClient();
@@ -8,12 +8,13 @@ const db = new PrismaClient();
  */
 export const isMerchantOpen = (merchant: any): boolean => {
     const now = new Date();
+    // Offset for SAST (UTC+2)
     const localTime = new Date(now.getTime() + (2 * 60 * 60 * 1000));
     const day = localTime.getUTCDay(); 
     const time = localTime.getUTCHours().toString().padStart(2, '0') + ":" + 
                  localTime.getUTCMinutes().toString().padStart(2, '0');
 
-    if (day === 0) return merchant.sun_open; // Uses DB preference for Sunday
+    if (day === 0) return merchant.sun_open; 
 
     if (day === 6) {
         return time >= merchant.sat_open_time && time <= merchant.sat_close_time;
@@ -55,14 +56,14 @@ export const handleMerchantAction = async (from: string, input: string, session:
         const order = await db.order.update({ where: { id: oid }, data: { status: OrderStatus.READY_FOR_PICKUP } });
         await sendTextMessage(order.customer_id, `🛍️ *Order Ready!* Your order from *${merchant.trading_name}* is ready.`);
         await sendTextMessage(from, "✅ Customer notified.");
-        return showMerchantDashboard(from, merchant); // UX: Back to menu
+        return showMerchantDashboard(from, merchant); 
     }
 
     if (input.startsWith('collected_')) {
         const oid = input.replace('collected_', '');
         await db.order.update({ where: { id: oid }, data: { status: OrderStatus.COMPLETED } });
         await sendTextMessage(from, "🏁 Order completed.");
-        return showMerchantDashboard(from, merchant); // UX: Back to menu
+        return showMerchantDashboard(from, merchant); 
     }
 
     // --- 2. OPERATING HOURS ---
@@ -93,16 +94,12 @@ export const handleMerchantAction = async (from: string, input: string, session:
     }
 
     if (input === 'h_custom_menu') {
-        // Sending the first 3 options
         await sendButtons(from, "Select day to edit:", [
             { id: 'h_custom_mf', title: '📅 Mon - Fri' },
             { id: 'h_custom_sat', title: '📅 Sat' },
             { id: 'h_custom_sun', title: '📅 Sun' }
         ]);
-        // Sending the cancel/back option separately to bypass the 3-button limit
-        return sendButtons(from, "Or go back:", [
-            { id: 'h_cancel', title: '❌ Cancel' }
-        ]);
+        return;
     }
 
     if (input === 'h_custom_sun') {
@@ -154,7 +151,7 @@ export const handleMerchantAction = async (from: string, input: string, session:
 
     if (session.active_prod_id && !isNaN(Number(input)) && session.active_prod_id.length > 10) {
         await db.product.update({ where: { id: session.active_prod_id }, data: { price: parseFloat(input) } });
-        return sendTextMessage(from, "📸 Send a **Photo**.");
+        return sendTextMessage(from, "📸 Send a **Photo** (as an image message).");
     }
 
     if (session.active_prod_id && message?.type === 'image') {
@@ -177,7 +174,7 @@ export const handleMerchantAction = async (from: string, input: string, session:
     // --- 4. EDIT/DELETE ---
     if (input === 'm_edit_menu') {
         const products = await db.product.findMany({ where: { merchant_id: merchant.id } });
-        if (products.length === 0) return sendTextMessage(from, "No products.");
+        if (products.length === 0) return sendTextMessage(from, "No products found.");
         for (const p of products) {
             await sendButtons(from, `✏️ Edit: *${p.name}*`, [{ id: `edit_sel_${p.id}`, title: 'Select' }]);
         }

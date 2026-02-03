@@ -15,21 +15,74 @@ enum MerchantStatus {
   SUSPENDED
 }
 
+enum OrderStatus {
+  PENDING
+  PAID
+  READY_FOR_PICKUP
+  COMPLETED
+  CANCELLED
+}
+
 model UserSession {
   id             String   @id @default(cuid())
   wa_id          String   @unique
-  mode           String   @default("CUSTOMER")
+  mode           String   @default("CUSTOMER") // CUSTOMER, MERCHANT, REGISTERING
   active_prod_id String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 }
 
 model Merchant {
-  id           String         @id @default(cuid())
-  wa_id        String         @unique
-  handle       String         @unique
-  trading_name String
-  status       MerchantStatus @default(ONBOARDING)
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
+  id                String         @id @default(cuid())
+  wa_id             String         @unique
+  handle            String         @unique
+  trading_name      String
+  
+  // Fields for Onboarding Engine
+  legal_entity_name String?
+  id_number         String?
+  bank_name         String?
+  bank_acc_no       String?
+  bank_type         String?
+  accepted_terms    Boolean        @default(false)
+  
+  description       String?
+  address           String?
+  
+  // Operating Hours
+  open_time         String         @default("09:00")
+  close_time        String         @default("17:00")
+  sat_open_time     String         @default("10:00")
+  sat_close_time    String         @default("15:00")
+  sun_open          Boolean        @default(false)
+  
+  status            MerchantStatus @default(ONBOARDING)
+  products          Product[]
+  orders            Order[]
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  merchant_id String
+  merchant    Merchant @relation(fields: [merchant_id], references: [id])
+  name        String
+  price       Float
+  image_url   String?
+  is_in_stock Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Order {
+  id            String      @id @default(cuid())
+  customer_id   String
+  merchant_id   String
+  merchant      Merchant    @relation(fields: [merchant_id], references: [id])
+  amount        Float       @default(0)
+  items_summary String?
+  status        OrderStatus @default(PENDING)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
 }

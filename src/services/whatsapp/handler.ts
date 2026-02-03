@@ -1,7 +1,9 @@
 import { PrismaClient, MerchantStatus } from '@prisma/client';
 import { sendTextMessage, sendButtons } from './sender';
+import { handleOnboardingAction } from './onboardingEngine';
+import { handleMerchantAction, showMerchantDashboard } from './merchantEngine';
 
-// Prisma Singleton for Railway/Supabase connection pooling
+// Prisma Singleton for Railway/Supabase
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db;
@@ -16,7 +18,7 @@ export const handleIncomingMessage = async (message: any) => {
     const input = String(buttonId || listId || textBody || "").trim();
 
     try {
-        // 1. Session & Merchant Lookup
+        // 1. Fetch Session & Merchant
         const session = await db.userSession.upsert({
             where: { wa_id: from },
             update: {},
@@ -29,70 +31,71 @@ export const handleIncomingMessage = async (message: any) => {
 
         console.log(`📩 [${session.mode}] ${from}: "${input}"`);
 
-        // 2. Global Commands
+        // 2. Global "Escape" Commands
         if (input.toLowerCase() === 'reset') {
-            await db.userSession.update({ where: { wa_id: from }, data: { mode: 'CUSTOMER' } });
-            return sendTextMessage(from, "🔄 Session reset to Customer mode.");
+            await db.userSession.update({ where: { wa_id: from }, data: { mode: 'CUSTOMER', active_prod_id: null } });
+            return sendTextMessage(from, "🔄 Session reset. You are now in Customer mode.");
         }
 
-        // 3. Routing Logic
-
-        // --- REGISTRATION FLOW ---
+        // 3. Routing Logic based on Session Mode
+        
+        // --- REGISTRATION MODE ---
         if (session.mode === 'REGISTERING') {
-            if (input.length < 3) {
-                return sendTextMessage(from, "⚠️ Shop Name too short. Please send a valid name.");
+            // Create a shell merchant record if it doesn't exist yet
+            if (!merchant) {
+                const handle = `shop_${from.slice(-4)}_${Math.floor(Math.random() * 1000)}`;
+                const newMerchant = await db.merchant.create({
+                    data: { 
+                        wa_id: from, 
+                        trading_name: '', 
+                        handle: handle,
+                        status: MerchantStatus.ONBOARDING 
+                    }
+                });
+                return handleOnboardingAction(from, input, session, newMerchant);
             }
-
-            const cleanHandle = input.toLowerCase().replace(/\s+/g, '_').substring(0, 15);
-            
-            await db.merchant.upsert({
-                where: { wa_id: from },
-                create: {
-                    wa_id: from,
-                    trading_name: input,
-                    handle: `${cleanHandle}_${from.slice(-4)}`,
-                    status: MerchantStatus.ACTIVE
-                },
-                update: {
-                    trading_name: input,
-                    status: MerchantStatus.ACTIVE
-                }
-            });
-
-            await db.userSession.update({
-                where: { wa_id: from },
-                data: { mode: 'MERCHANT' }
-            });
-
-            return sendButtons(from, `🎉 *${input}* is now live on Omeru!`, [
-                { id: 'm_dashboard', title: '🏠 Dashboard' },
-                { id: 'reset', title: '🔄 Back to Customer' }
-            ]);
+            return handleOnboardingAction(from, input, session, merchant);
         }
 
-        // --- MERCHANT DASHBOARD ---
+        // --- MERCHANT MODE ---
         if (session.mode === 'MERCHANT' && merchant) {
-            return sendButtons(from, `🏪 *Merchant Dashboard: ${merchant.trading_name}*\nStatus: Active ✅`, [
-                { id: 'm_inventory', title: '📦 Inventory' },
-                { id: 'm_orders', title: '📋 Orders' },
-                { id: 'reset', title: '🔄 Switch to Customer' }
-            ]);
+            // Handle images (for product creation) separately
+            if (message.type === 'image' || session.active_prod_id || buttonId || textBody) {
+                return handleMerchantAction(from, input, session, merchant, message);
+            }
+            return showMerchantDashboard(from, merchant);
         }
 
-        // --- CUSTOMER WELCOME (Default) ---
+        // --- CUSTOMER MODE (Default) ---
+        
+        // Trigger Registration
         if (input.toLowerCase() === 'sell' || input.toLowerCase() === 'register') {
             await db.userSession.update({ where: { wa_id: from }, data: { mode: 'REGISTERING' } });
-            return sendTextMessage(from, "🏪 *Start Selling!*\n\nWhat is your **Shop Name**?");
+            return sendTextMessage(from, "🏪 *Shop Registration*\n\nWhat is the **Trading Name** of your shop?");
         }
 
-        return sendButtons(from, "👋 *Welcome to Omeru*\n\nYour local marketplace. What would you like to do today?", [
+        // Trigger Merchant Dashboard (if already a merchant)
+        if (input.toLowerCase() === 'merchant' && merchant) {
+            await db.userSession.update({ where: { wa_id: from }, data: { mode: 'MERCHANT' } });
+            return showMerchantDashboard(from, merchant);
+        }
+
+        // Standard Customer Menu
+        const welcomeText = "👋 *Welcome to Omeru*\n\nBuy local products directly on WhatsApp.";
+        const buttons = [
             { id: 'browse', title: '🛍️ Browse Shops' },
-            { id: 'sell', title: '🏪 Register Shop' },
-            { id: 'c_orders', title: '📦 My Orders' }
-        ]);
+            { id: 'sell', title: '🏪 Start Selling' }
+        ];
+
+        // Add "Merchant Dashboard" button if they already own a shop
+        if (merchant) {
+            buttons.push({ id: 'merchant', title: '⚙️ Shop Manager' });
+        }
+
+        return sendButtons(from, welcomeText, buttons);
 
     } catch (err) {
-        console.error("❌ Handler Error:", err);
-        return sendTextMessage(from, "⚠️ System update in progress. Please try again in a moment.");
+        console.error("❌ Critical Handler Error:", err);
+        return sendTextMessage(from, "⚠️ Our systems are currently syncing. Please try again in 1 minute.");
     }
 };
