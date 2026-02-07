@@ -9,7 +9,28 @@ const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db;
 
-const INVENTORY_PREFIXES = ['m_inventory', 'p_', 'm_add_', 'conf_', 'toggle_', 'delete_prod_', 'edit_prod_', 'skip_image', 'cancel_delete', 'confirm_del_'];
+const INVENTORY_PREFIXES = [
+    'm_inventory',
+    'm_categories',
+    'cat_add',
+    'cat_',
+    'select_cat_',
+    'edit_category_',
+    'p_',
+    'm_add_',
+    'conf_',
+    'toggle_',
+    'delete_prod_',
+    'edit_prod_',
+    'skip_image',
+    'cancel_delete',
+    'confirm_del_',
+    'view_variants_',
+    'add_variant_',
+    'edit_variant_',
+    'variant_field_',
+    'variant_delete_'
+];
 const KITCHEN_PREFIXES = ['m_kitchen', 'k_', 'ready_', 'collected_', 'view_kitchen_'];
 const SETTINGS_PREFIXES = ['m_settings', 's_', 'h_', 'm_edit_hours', 'ob_hours'];
 

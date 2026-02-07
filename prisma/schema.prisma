@@ -53,16 +53,30 @@ model Merchant {
   manual_closed     Boolean        @default(false)
   accepted_terms    Boolean        @default(false)
   status            MerchantStatus @default(ACTIVE)
+  categories        Category[]
   products          Product[]
   orders            Order[]
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
 }
 
+model Category {
+  id          String    @id @default(cuid())
+  merchant_id String
+  merchant    Merchant  @relation(fields: [merchant_id], references: [id])
+  name        String
+  description String?
+  products    Product[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
 model Product {
   id          String      @id @default(cuid())
   merchant_id String
   merchant    Merchant    @relation(fields: [merchant_id], references: [id])
+  category_id String?
+  category    Category?   @relation(fields: [category_id], references: [id])
   name        String
   description String?
   price       Float
@@ -70,8 +84,22 @@ model Product {
   is_in_stock Boolean     @default(true)
   status      String      @default("ACTIVE")
   order_items OrderItem[]
+  variants    ProductVariant[]
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
+}
+
+model ProductVariant {
+  id          String   @id @default(cuid())
+  product_id  String
+  product     Product  @relation(fields: [product_id], references: [id])
+  size        String?
+  color       String?
+  sku         String?
+  price       Float
+  is_in_stock Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model Order {
