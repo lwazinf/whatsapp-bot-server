@@ -2,7 +2,7 @@ import { PrismaClient, Merchant, UserSession } from '@prisma/client';
 import { handleInventoryActions } from './merchantInventory';
 import { handleKitchenActions } from './merchantKitchen';
 import { handleSettingsActions } from './merchantSettings';
-import { showMerchantDashboard } from './merchantDashboard';
+import { getMerchantStats, showMerchantDashboard } from './merchantDashboard';
 import { sendButtons, sendTextMessage } from './sender';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
@@ -45,6 +45,31 @@ export const handleMerchantAction = async (
         // Dashboard
         if (input === 'm_dashboard' || input.toLowerCase() === 'menu' || input.toLowerCase() === 'home') {
             await showMerchantDashboard(from, merchant);
+            return;
+        }
+
+        if (input === 'm_stats') {
+            const stats = await getMerchantStats(merchant.id);
+            let summary = `📊 *${merchant.trading_name} Stats*\n\n`;
+            summary += `💰 Total Sales: R${stats.salesTotal.toFixed(2)}\n`;
+            summary += `🔔 Pending Orders: ${stats.pendingOrders}\n`;
+            summary += `✅ Active Products: ${stats.activeProducts}\n`;
+            summary += `🗄️ Archived Products: ${stats.archivedProducts}\n`;
+
+            if (stats.recentOrders.length > 0) {
+                summary += `\n🧾 Recent Orders:\n`;
+                stats.recentOrders.forEach(order => {
+                    summary += `• #${order.id.slice(-5)} • R${order.total.toFixed(2)} • ${order.status}\n`;
+                });
+            } else {
+                summary += `\n🧾 Recent Orders:\n• None yet`;
+            }
+
+            await sendTextMessage(from, summary);
+            await sendButtons(from, 'Actions:', [
+                { id: 'm_dashboard', title: '🏠 Dashboard' },
+                { id: 'm_kitchen', title: '🍳 Kitchen' }
+            ]);
             return;
         }
 
