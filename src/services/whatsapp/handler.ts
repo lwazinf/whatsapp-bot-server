@@ -70,7 +70,7 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
         }
 
         // Customer Routing
-        if (input.startsWith('@') || input === 'browse_shops') {
+        if (input.startsWith('@') || input === 'browse_shops' || input.startsWith('cat_') || input.startsWith('prod_') || input.startsWith('variant_')) {
             await handleCustomerDiscovery(from, input);
             return;
         }
