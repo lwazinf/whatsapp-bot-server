@@ -1,5 +1,6 @@
 import { PrismaClient, Merchant } from '@prisma/client';
 import { sendButtons, sendTextMessage } from './sender';
+import { getBrandingForMerchant } from './branding';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
@@ -14,6 +15,7 @@ export const showMerchantDashboard = async (to: string, merchant: Merchant): Pro
         });
         
         const status = merchant.manual_closed ? '🔴 CLOSED' : '🟢 OPEN';
+        const branding = await getBrandingForMerchant(merchant.id);
         
         // Get pending orders count
         const pendingCount = await db.order.count({
@@ -31,6 +33,10 @@ export const showMerchantDashboard = async (to: string, merchant: Merchant): Pro
         }
         
         msg += '\nManage your store below.';
+
+        if (branding.supportNumber) {
+            msg += `\n📞 Support: ${branding.supportNumber}`;
+        }
 
         const kitchenTitle = pendingCount > 0 ? `🍳 Kitchen (${pendingCount})` : '🍳 Kitchen';
 

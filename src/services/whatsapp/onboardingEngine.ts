@@ -1,5 +1,6 @@
 import { PrismaClient, MerchantStatus, Merchant, UserSession } from '@prisma/client';
 import { sendTextMessage, sendButtons } from './sender';
+import { getBrandingForMerchant, BrandingSettings } from './branding';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
@@ -25,10 +26,11 @@ export const handleOnboardingAction = async (
             return;
         }
 
+        const branding = await getBrandingForMerchant(merchant?.id);
         const step = getStep(merchant);
 
         switch (step) {
-            case 1: await handleTradingName(from, input); break;
+            case 1: await handleTradingName(from, input, branding); break;
             case 2: await handleLegalName(from, input, merchant!); break;
             case 3: await handleIdNumber(from, input, merchant!); break;
             case 4: await handleBankDetails(from, input, merchant!); break;
@@ -53,10 +55,10 @@ const getStep = (m: Merchant | null): number => {
     return 7;
 };
 
-const handleTradingName = async (from: string, input: string): Promise<void> => {
+const handleTradingName = async (from: string, input: string, branding: BrandingSettings): Promise<void> => {
     if (!input || input.toLowerCase() === 'hi' || input.toLowerCase() === 'hello' || input.toLowerCase() === 'sell') {
         await sendTextMessage(from, 
-            '🏪 *Welcome to Omeru!*\n\n' +
+            `🏪 *Welcome to ${branding.brandName}!*\n\n` +
             "Let's set up your shop.\n\n" +
             '📝 *Step 1/6: Shop Name*\n' +
             'What is your trading name?'

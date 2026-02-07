@@ -53,10 +53,26 @@ model Merchant {
   manual_closed     Boolean        @default(false)
   accepted_terms    Boolean        @default(false)
   status            MerchantStatus @default(ACTIVE)
+  branding          MerchantBranding?
   products          Product[]
   orders            Order[]
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
+}
+
+model MerchantBranding {
+  id              String   @id @default(cuid())
+  merchant_id     String?  @unique
+  merchant        Merchant? @relation(fields: [merchant_id], references: [id])
+  brand_name      String?
+  welcome_message String?
+  switch_code     String?
+  currency_symbol String?
+  timezone        String?
+  support_number  String?
+  theme_variant   String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }
 
 model Product {

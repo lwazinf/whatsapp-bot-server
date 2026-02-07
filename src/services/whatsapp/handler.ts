@@ -4,6 +4,7 @@ import { handleOnboardingAction } from './onboardingEngine';
 import { handleCustomerDiscovery } from './customerDiscovery';
 import { handleCustomerOrders } from './customerOrders';
 import { sendTextMessage, sendButtons } from './sender';
+import { getBrandingForMerchant } from './branding';
 
 // Singleton PrismaClient
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
@@ -39,11 +40,12 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
         });
         
         const merchant = await db.merchant.findUnique({ where: { wa_id: from } });
+        const branding = await getBrandingForMerchant(merchant?.id);
 
         console.log(`📩 [${session.mode}] ${from}: "${input}"`);
 
         // Global: Switch Modes
-        if (input.toLowerCase() === 'switch' || input === 'SwitchOmeru') {
+        if (input.toLowerCase() === 'switch' || input === branding.switchCode) {
             const newMode = session.mode === 'CUSTOMER' ? 'MERCHANT' : 'CUSTOMER';
             await db.userSession.update({
                 where: { wa_id: from },
@@ -87,7 +89,7 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
                 data: { mode: 'REGISTERING' }
             });
             await sendTextMessage(from, 
-                '🏪 *Start Selling on Omeru!*\n\n' +
+                `🏪 *Start Selling on ${branding.brandName}!*\n\n` +
                 "Let's set up your shop.\n\n" +
                 '📝 *Step 1 of 6: Shop Name*\n' +
                 'What is your trading/shop name?'
@@ -96,7 +98,7 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
         }
 
         // Default Customer Welcome
-        await sendButtons(from, '👋 Welcome to *Omeru*!\n\nWhat would you like to do?', [
+        await sendButtons(from, branding.welcomeMessage, [
             { id: 'browse_shops', title: '🪪 Browse Shops' },
             { id: 'c_my_orders', title: '📦 My Orders' }
         ]);
