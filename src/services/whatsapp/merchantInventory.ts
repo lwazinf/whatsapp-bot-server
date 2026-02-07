@@ -1,5 +1,6 @@
 import { PrismaClient, Merchant, UserSession } from '@prisma/client';
 import { sendTextMessage, sendButtons, sendListMessage } from './sender';
+import { formatCurrency } from './formatters';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
@@ -52,7 +53,7 @@ export const handleInventoryActions = async (
             const rows = products.map(p => ({
                 id: `edit_prod_${p.id}`,
                 title: p.name.substring(0, 24),
-                description: `R${p.price.toFixed(2)} • ${p.is_in_stock ? '🟢' : '🔴'}`
+                description: `${formatCurrency(p.price, merchant)} • ${p.is_in_stock ? '🟢' : '🔴'}`
             }));
 
             await sendListMessage(from, `📦 *Your Menu* (${products.length} items)`, '📋 View Items', [{ title: 'Products', rows }]);
@@ -66,7 +67,7 @@ export const handleInventoryActions = async (
             const p = await db.product.findUnique({ where: { id: pid } });
             if (!p) { await sendTextMessage(from, '❌ Product not found.'); return; }
 
-            await sendButtons(from, `📦 *${p.name}*\n\nR${p.price.toFixed(2)}\n${p.is_in_stock ? '🟢 In Stock' : '🔴 Out of Stock'}`, [
+            await sendButtons(from, `📦 *${p.name}*\n\n${formatCurrency(p.price, merchant)}\n${p.is_in_stock ? '🟢 In Stock' : '🔴 Out of Stock'}`, [
                 { id: `toggle_${p.id}`, title: p.is_in_stock ? '🔴 Out of Stock' : '🟢 In Stock' },
                 { id: `delete_prod_${p.id}`, title: '🗑️ Delete' }
             ]);
@@ -164,7 +165,7 @@ export const handleInventoryActions = async (
 
             await db.product.update({ where: { id: pid }, data: { price } });
             await setState(from, `${STATE.IMAGE}${pid}`);
-            await sendButtons(from, `💰 R${price.toFixed(2)}\n\n*Step 3/3:* Send a photo of the item.`, [
+            await sendButtons(from, `💰 ${formatCurrency(price, merchant)}\n\n*Step 3/3:* Send a photo of the item.`, [
                 { id: 'skip_image', title: '⏭️ Skip' }
             ]);
             return;
@@ -188,7 +189,7 @@ export const handleInventoryActions = async (
             await setState(from, `${STATE.PREVIEW}${pid}`);
 
             await sendButtons(from, 
-                `🔍 *Review*\n\n📦 ${product.name}\n💰 R${product.price.toFixed(2)}\n${imageUrl ? '📸 Image added' : '📷 No image'}\n\nPublish?`,
+                `🔍 *Review*\n\n📦 ${product.name}\n💰 ${formatCurrency(product.price, merchant)}\n${imageUrl ? '📸 Image added' : '📷 No image'}\n\nPublish?`,
                 [
                     { id: `conf_live_${pid}`, title: '🚀 Make Live' },
                     { id: `delete_prod_${pid}`, title: '❌ Cancel' }

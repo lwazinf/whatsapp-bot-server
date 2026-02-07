@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { sendTextMessage, sendButtons } from './sender';
+import { formatCurrency, formatOrderStatus, getLocaleTemplates } from './formatters';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
@@ -22,8 +23,8 @@ export const handleCustomerOrders = async (from: string, input: string): Promise
         let msg = '📦 *Your Recent Orders*\n\n';
         orders.forEach(o => {
             const emoji = getStatusEmoji(o.status);
-            msg += `${emoji} #${o.id.slice(-5)} - R${o.total.toFixed(2)}\n`;
-            msg += `   ${o.merchant?.trading_name || 'Shop'} • ${formatStatus(o.status)}\n\n`;
+            msg += `${emoji} #${o.id.slice(-5)} - ${formatCurrency(o.total, o.merchant)}\n`;
+            msg += `   ${o.merchant?.trading_name || 'Shop'} • ${formatOrderStatus(o.status, o.merchant?.locale)}\n\n`;
         });
 
         const buttons = orders.slice(0, 3).map(o => ({
@@ -51,17 +52,18 @@ export const handleCustomerOrders = async (from: string, input: string): Promise
             return;
         }
 
-        let msg = `📋 *Order #${order.id.slice(-5)}*\n`;
+        const templates = getLocaleTemplates(order.merchant?.locale);
+        let msg = `📋 *${templates.orderLabel} #${order.id.slice(-5)}*\n`;
         msg += `━━━━━━━━━━━━━━━\n`;
         msg += `🏪 ${order.merchant?.trading_name || 'Shop'}\n`;
-        msg += `${getStatusEmoji(order.status)} ${formatStatus(order.status)}\n\n`;
+        msg += `${getStatusEmoji(order.status)} ${formatOrderStatus(order.status, order.merchant?.locale)}\n\n`;
         
-        msg += `*Items:*\n`;
+        msg += `*${templates.itemsLabel}:*\n`;
         order.order_items.forEach(item => {
-            msg += `• ${item.quantity}x ${item.product?.name || 'Item'} - R${item.price.toFixed(2)}\n`;
+            msg += `• ${item.quantity}x ${item.product?.name || 'Item'} - ${formatCurrency(item.price, order.merchant)}\n`;
         });
         
-        msg += `\n💰 *Total: R${order.total.toFixed(2)}*`;
+        msg += `\n💰 *${templates.totalLabel}: ${formatCurrency(order.total, order.merchant)}*`;
 
         await sendButtons(from, msg, [
             { id: 'c_my_orders', title: '⬅️ Back' },
@@ -78,11 +80,4 @@ const getStatusEmoji = (status: string): string => {
         'PENDING': '🟡', 'PAID': '🟢', 'READY_FOR_PICKUP': '✅', 'COMPLETED': '🎉', 'CANCELLED': '❌'
     };
     return map[status] || '⚪';
-};
-
-const formatStatus = (status: string): string => {
-    const map: Record<string, string> = {
-        'PENDING': 'Pending', 'PAID': 'Paid', 'READY_FOR_PICKUP': 'Ready for Pickup', 'COMPLETED': 'Completed', 'CANCELLED': 'Cancelled'
-    };
-    return map[status] || status;
 };

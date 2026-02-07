@@ -42,6 +42,9 @@ model Merchant {
   description       String?
   address           String?
   image_url         String?
+  locale            String         @default("en-US")
+  currency_code     String         @default("ZAR")
+  currency_symbol   String         @default("R")
   bank_name         String?
   bank_acc_no       String?
   bank_type         String?

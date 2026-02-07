@@ -1,5 +1,6 @@
 import { PrismaClient, OrderStatus, Merchant, UserSession } from '@prisma/client';
 import { sendTextMessage, sendButtons, sendListMessage } from './sender';
+import { formatCurrency, getLocaleTemplates } from './formatters';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
@@ -15,6 +16,7 @@ export const handleKitchenActions = async (
     merchant: Merchant
 ): Promise<void> => {
     try {
+        const templates = getLocaleTemplates(merchant.locale);
         // Kitchen Menu
         if (input === 'm_kitchen') {
             const [newCount, readyCount] = await Promise.all([
@@ -52,7 +54,7 @@ export const handleKitchenActions = async (
                 const mins = Math.floor((Date.now() - o.createdAt.getTime()) / 60000);
                 return {
                     id: `k_view_${o.id}`,
-                    title: `#${o.id.slice(-5)} • R${o.total.toFixed(0)}`,
+                    title: `#${o.id.slice(-5)} • ${formatCurrency(o.total, merchant)}`,
                     description: `${mins}m waiting`
                 };
             });
@@ -75,11 +77,11 @@ export const handleKitchenActions = async (
                 return;
             }
 
-            let msg = `📋 *Order #${order.id.slice(-5)}*\n━━━━━━━━━━━━\n`;
+            let msg = `📋 *${templates.orderLabel} #${order.id.slice(-5)}*\n━━━━━━━━━━━━\n`;
             order.order_items.forEach(i => {
                 msg += `• ${i.quantity}x ${i.product?.name || 'Item'}\n`;
             });
-            msg += `\n💰 R${order.total.toFixed(2)}`;
+            msg += `\n💰 ${templates.totalLabel}: ${formatCurrency(order.total, merchant)}`;
 
             await sendButtons(from, msg, [
                 { id: `ready_${order.id}`, title: '✅ Mark Ready' },
@@ -105,7 +107,7 @@ export const handleKitchenActions = async (
             const rows = orders.map(o => ({
                 id: `collected_${o.id}`,
                 title: `#${o.id.slice(-5)} • Collect`,
-                description: `R${o.total.toFixed(2)}`
+                description: formatCurrency(o.total, merchant)
             }));
 
             await sendListMessage(from, `✅ *Ready for Pickup* (${orders.length})`, '📋 View', [{ title: 'Orders', rows }]);
@@ -127,7 +129,7 @@ export const handleKitchenActions = async (
 
             // Notify customer
             await sendTextMessage(order.customer_id, 
-                `🛎️ *Order Ready!*\n\nYour order from *${merchant.trading_name}* is ready!\n\n📦 #${order.id.slice(-5)}\n📍 ${merchant.address || 'See store for pickup'}`
+                `🛎️ *${templates.orderReadyTitle}*\n\n${templates.orderReadyBody(merchant.trading_name)}\n\n📦 #${order.id.slice(-5)}\n📍 ${merchant.address || 'See store for pickup'}`
             );
 
             await sendTextMessage(from, '✅ Marked ready. Customer notified!');
@@ -148,15 +150,21 @@ export const handleKitchenActions = async (
             await db.order.update({ where: { id: oid }, data: { status: OrderStatus.COMPLETED } });
 
             // Notify customer
-            await sendTextMessage(order.customer_id, `🎉 *Order Complete!*\n\nThank you for ordering from *${merchant.trading_name}*!`);
+            await sendTextMessage(
+                order.customer_id,
+                `🎉 *${templates.orderCompleteTitle}*\n\n${templates.orderCompleteThanks(merchant.trading_name)}`
+            );
 
             // Log fee to admin
             const fee = order.total * PLATFORM_FEE;
             await sendTextMessage(ADMIN_NUMBER, 
-                `💰 *Order Complete*\n\n🏪 ${merchant.trading_name}\n📦 #${order.id.slice(-5)}\n💵 R${order.total.toFixed(2)}\n📊 Fee: R${fee.toFixed(2)}`
+                `💰 *${templates.orderCompleteTitle}*\n\n🏪 ${merchant.trading_name}\n📦 #${order.id.slice(-5)}\n💵 ${formatCurrency(order.total, merchant)}\n📊 ${templates.feeLabel}: ${formatCurrency(fee, merchant)}`
             );
 
-            await sendTextMessage(from, `🎉 #${order.id.slice(-5)} completed!\n\n💵 R${order.total.toFixed(2)}\n💰 Earnings: R${(order.total - fee).toFixed(2)}`);
+            await sendTextMessage(
+                from,
+                `🎉 #${order.id.slice(-5)} completed!\n\n💵 ${formatCurrency(order.total, merchant)}\n💰 ${templates.earningsLabel}: ${formatCurrency(order.total - fee, merchant)}`
+            );
             await handleKitchenActions(from, 'k_ready', session, merchant);
             return;
         }

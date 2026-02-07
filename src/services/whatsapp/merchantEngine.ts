@@ -4,6 +4,7 @@ import { handleKitchenActions } from './merchantKitchen';
 import { handleSettingsActions } from './merchantSettings';
 import { showMerchantDashboard } from './merchantDashboard';
 import { sendButtons, sendTextMessage } from './sender';
+import { formatCurrency, getLocaleTemplates } from './formatters';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
@@ -40,11 +41,12 @@ export const handleMerchantAction = async (
                 return;
             }
 
-            let summary = `📋 *Order #${order.id.slice(-5)}*\n\n`;
+            const templates = getLocaleTemplates(merchant.locale);
+            let summary = `📋 *${templates.orderLabel} #${order.id.slice(-5)}*\n\n`;
             order.order_items.forEach(item => {
                 summary += `• ${item.quantity}x ${item.product?.name || 'Item'}\n`;
             });
-            summary += `\n💰 Total: R${order.total.toFixed(2)}`;
+            summary += `\n💰 ${templates.totalLabel}: ${formatCurrency(order.total, merchant)}`;
 
             await sendButtons(from, summary, [
                 { id: `ready_${order.id}`, title: '✅ Mark Ready' },

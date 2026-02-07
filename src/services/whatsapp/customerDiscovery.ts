@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { sendTextMessage, sendListMessage } from './sender';
+import { formatCurrency } from './formatters';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
@@ -47,7 +48,7 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
                 rows: products.map(p => ({
                     id: `order_${merchant.id}_${p.id}`,
                     title: p.name.substring(0, 24),
-                    description: `R${p.price.toFixed(2)}`
+                    description: formatCurrency(p.price, merchant)
                 }))
             }];
 
