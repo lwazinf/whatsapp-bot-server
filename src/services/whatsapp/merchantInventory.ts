@@ -10,7 +10,8 @@ const STATE = {
     PRICE: 'ADD_PRICE_',
     IMAGE: 'ADD_IMG_',
     PREVIEW: 'ADD_PREVIEW_',
-    DELETE: 'DEL_'
+    DELETE: 'DEL_',
+    PERMA_DELETE: 'PERMA_DEL_'
 };
 
 export const handleInventoryActions = async (
@@ -30,6 +31,7 @@ export const handleInventoryActions = async (
             await sendButtons(from, `📦 *Menu Manager*\n\n${count} active items`, [
                 { id: 'm_add_prod', title: '➕ Add Item' },
                 { id: 'p_view_all', title: '👀 View Menu' },
+                { id: 'p_view_archived', title: '📦 Archived Items' },
                 { id: 'm_dashboard', title: '🏠 Dashboard' }
             ]);
             return;
@@ -60,6 +62,31 @@ export const handleInventoryActions = async (
             return;
         }
 
+        // View archived products
+        if (input === 'p_view_archived') {
+            const products = await db.product.findMany({ 
+                where: { merchant_id: merchant.id, status: 'ARCHIVED' },
+                orderBy: { name: 'asc' },
+                take: 10
+            });
+            
+            if (products.length === 0) {
+                await sendTextMessage(from, '📭 No archived items.');
+                await handleInventoryActions(from, 'm_inventory', session, merchant);
+                return;
+            }
+
+            const rows = products.map(p => ({
+                id: `archived_prod_${p.id}`,
+                title: p.name.substring(0, 24),
+                description: `R${p.price.toFixed(2)} • Archived`
+            }));
+
+            await sendListMessage(from, `📦 *Archived Items* (${products.length})`, '📦 View Archived', [{ title: 'Products', rows }]);
+            await sendButtons(from, 'Nav:', [{ id: 'm_inventory', title: '⬅️ Back' }]);
+            return;
+        }
+
         // Edit product
         if (input.startsWith('edit_prod_')) {
             const pid = input.replace('edit_prod_', '');
@@ -68,9 +95,23 @@ export const handleInventoryActions = async (
 
             await sendButtons(from, `📦 *${p.name}*\n\nR${p.price.toFixed(2)}\n${p.is_in_stock ? '🟢 In Stock' : '🔴 Out of Stock'}`, [
                 { id: `toggle_${p.id}`, title: p.is_in_stock ? '🔴 Out of Stock' : '🟢 In Stock' },
-                { id: `delete_prod_${p.id}`, title: '🗑️ Delete' }
+                { id: `delete_prod_${p.id}`, title: '🗑️ Archive' }
             ]);
             await sendButtons(from, 'Nav:', [{ id: 'p_view_all', title: '⬅️ Back' }]);
+            return;
+        }
+
+        // Archived product actions
+        if (input.startsWith('archived_prod_')) {
+            const pid = input.replace('archived_prod_', '');
+            const p = await db.product.findUnique({ where: { id: pid } });
+            if (!p || p.merchant_id !== merchant.id) { await sendTextMessage(from, '❌ Not found.'); return; }
+
+            await sendButtons(from, `📦 *${p.name}*\n\nR${p.price.toFixed(2)}\n📦 Archived`, [
+                { id: `restore_prod_${p.id}`, title: '♻️ Restore' },
+                { id: `perma_del_${p.id}`, title: '🗑️ Delete' }
+            ]);
+            await sendButtons(from, 'Nav:', [{ id: 'p_view_archived', title: '⬅️ Back' }]);
             return;
         }
 
@@ -93,8 +134,8 @@ export const handleInventoryActions = async (
             if (!p) { await sendTextMessage(from, '❌ Not found.'); return; }
             
             await setState(from, `${STATE.DELETE}${pid}`);
-            await sendButtons(from, `⚠️ Delete *${p.name}*?`, [
-                { id: `confirm_del_${pid}`, title: '🗑️ Yes, Delete' },
+            await sendButtons(from, `⚠️ Archive *${p.name}*?`, [
+                { id: `confirm_del_${pid}`, title: '🗑️ Yes, Archive' },
                 { id: 'cancel_delete', title: '❌ Cancel' }
             ]);
             return;
@@ -104,8 +145,8 @@ export const handleInventoryActions = async (
             const pid = input.replace('confirm_del_', '');
             const p = await db.product.findUnique({ where: { id: pid } });
             if (p && p.merchant_id === merchant.id) {
-                await db.product.delete({ where: { id: pid } });
-                await sendTextMessage(from, `🗑️ *${p.name}* deleted.`);
+                await db.product.update({ where: { id: pid }, data: { status: 'ARCHIVED', is_in_stock: false } });
+                await sendTextMessage(from, `📦 *${p.name}* archived.`);
             }
             await clearState(from);
             await handleInventoryActions(from, 'p_view_all', session, merchant);
@@ -114,7 +155,46 @@ export const handleInventoryActions = async (
 
         if (input === 'cancel_delete') {
             await clearState(from);
-            await handleInventoryActions(from, 'p_view_all', session, merchant);
+            const returnAction = state.startsWith(STATE.PERMA_DELETE) ? 'p_view_archived' : 'p_view_all';
+            await handleInventoryActions(from, returnAction, session, merchant);
+            return;
+        }
+
+        // Restore archived product
+        if (input.startsWith('restore_prod_')) {
+            const pid = input.replace('restore_prod_', '');
+            const p = await db.product.findUnique({ where: { id: pid } });
+            if (p && p.merchant_id === merchant.id) {
+                await db.product.update({ where: { id: pid }, data: { status: 'ACTIVE' } });
+                await sendTextMessage(from, `♻️ *${p.name}* restored.`);
+            }
+            await handleInventoryActions(from, 'p_view_archived', session, merchant);
+            return;
+        }
+
+        // Permanently delete archived product
+        if (input.startsWith('perma_del_')) {
+            const pid = input.replace('perma_del_', '');
+            const p = await db.product.findUnique({ where: { id: pid } });
+            if (!p || p.merchant_id !== merchant.id) { await sendTextMessage(from, '❌ Not found.'); return; }
+
+            await setState(from, `${STATE.PERMA_DELETE}${pid}`);
+            await sendButtons(from, `⚠️ Permanently delete *${p.name}*?`, [
+                { id: `confirm_perma_del_${pid}`, title: '🗑️ Yes, Delete' },
+                { id: 'cancel_delete', title: '❌ Cancel' }
+            ]);
+            return;
+        }
+
+        if (input.startsWith('confirm_perma_del_')) {
+            const pid = input.replace('confirm_perma_del_', '');
+            const p = await db.product.findUnique({ where: { id: pid } });
+            if (p && p.merchant_id === merchant.id) {
+                await db.product.delete({ where: { id: pid } });
+                await sendTextMessage(from, `🗑️ *${p.name}* deleted permanently.`);
+            }
+            await clearState(from);
+            await handleInventoryActions(from, 'p_view_archived', session, merchant);
             return;
         }
 
