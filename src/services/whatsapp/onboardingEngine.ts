@@ -1,5 +1,32 @@
 import { PrismaClient, MerchantStatus, Merchant, UserSession } from '@prisma/client';
 import { sendTextMessage, sendButtons } from './sender';
+import {
+    addProductLabel,
+    alreadyRegisteredMessage,
+    bankFormatWarningMessage,
+    bankInvalidAccountMessage,
+    bankSavedMessage,
+    dashboardLabel,
+    hoursCustomLabel,
+    hoursFormatWarningMessage,
+    hoursPromptMessage,
+    hoursStandardLabel,
+    hoursStepMessage,
+    idInvalidMessage,
+    idSavedMessage,
+    legalNameInvalidMessage,
+    legalNameSavedMessage,
+    onboardingErrorMessage,
+    registrationPausedMessage,
+    termsAcceptLabel,
+    termsAcceptedMessage,
+    termsCancelLabel,
+    termsMessage,
+    tradingNameInvalidMessage,
+    tradingNamePromptMessage,
+    tradingNameSavedMessage,
+    weekdayHoursSavedMessage
+} from './templates';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
@@ -21,7 +48,7 @@ export const handleOnboardingAction = async (
         // Cancel
         if (input.toLowerCase() === 'cancel' || input === 'ob_cancel') {
             await db.userSession.update({ where: { wa_id: from }, data: { mode: 'CUSTOMER', active_prod_id: null } });
-            await sendTextMessage(from, '📋 Registration paused. Type *sell* to continue later.');
+            await sendTextMessage(from, registrationPausedMessage());
             return;
         }
 
@@ -34,12 +61,12 @@ export const handleOnboardingAction = async (
             case 4: await handleBankDetails(from, input, merchant!); break;
             case 5: await handleHours(from, input, session, merchant!); break;
             case 6: await handleTerms(from, input, merchant!); break;
-            default: await sendTextMessage(from, '✅ Already registered!');
+            default: await sendTextMessage(from, alreadyRegisteredMessage());
         }
 
     } catch (error: any) {
         console.error(`❌ Onboarding Error: ${error.message}`);
-        await sendTextMessage(from, '❌ Error. Try again or type *cancel*.');
+        await sendTextMessage(from, onboardingErrorMessage());
     }
 };
 
@@ -55,17 +82,12 @@ const getStep = (m: Merchant | null): number => {
 
 const handleTradingName = async (from: string, input: string): Promise<void> => {
     if (!input || input.toLowerCase() === 'hi' || input.toLowerCase() === 'hello' || input.toLowerCase() === 'sell') {
-        await sendTextMessage(from, 
-            '🏪 *Welcome to Omeru!*\n\n' +
-            "Let's set up your shop.\n\n" +
-            '📝 *Step 1/6: Shop Name*\n' +
-            'What is your trading name?'
-        );
+        await sendTextMessage(from, tradingNamePromptMessage());
         return;
     }
 
     if (input.length < 3 || input.length > 50) {
-        await sendTextMessage(from, '⚠️ Name must be 3-50 characters.');
+        await sendTextMessage(from, tradingNameInvalidMessage());
         return;
     }
 
@@ -77,49 +99,36 @@ const handleTradingName = async (from: string, input: string): Promise<void> => 
         create: { wa_id: from, trading_name: input.trim(), handle, status: MerchantStatus.ONBOARDING }
     });
 
-    await sendTextMessage(from, 
-        `✅ *${input}* (@${handle})\n\n` +
-        '📝 *Step 2/6: Owner Details*\n' +
-        'Full legal name of owner/company?'
-    );
+    await sendTextMessage(from, tradingNameSavedMessage(input.trim(), handle));
 };
 
 const handleLegalName = async (from: string, input: string, merchant: Merchant): Promise<void> => {
     if (input.length < 3) {
-        await sendTextMessage(from, '⚠️ Please enter a valid name.');
+        await sendTextMessage(from, legalNameInvalidMessage());
         return;
     }
 
     await db.merchant.update({ where: { wa_id: from }, data: { legal_entity_name: input.trim() } });
-    await sendTextMessage(from, 
-        `✅ ${input.trim()}\n\n` +
-        '📝 *Step 3/6: ID*\n' +
-        'SA ID (13 digits) or CIPC number?'
-    );
+    await sendTextMessage(from, legalNameSavedMessage(input.trim()));
 };
 
 const handleIdNumber = async (from: string, input: string, merchant: Merchant): Promise<void> => {
     const clean = input.replace(/[\s-]/g, '').toUpperCase();
     
     if (clean.length < 6) {
-        await sendTextMessage(from, '⚠️ Invalid ID. Enter 13-digit SA ID or CIPC number.');
+        await sendTextMessage(from, idInvalidMessage());
         return;
     }
 
     await db.merchant.update({ where: { wa_id: from }, data: { id_number: clean } });
-    await sendTextMessage(from, 
-        '✅ ID saved.\n\n' +
-        '📝 *Step 4/6: Bank Details*\n\n' +
-        'Format: *Bank, Account Number, Type*\n\n' +
-        '_Example: FNB, 62845678901, Cheque_'
-    );
+    await sendTextMessage(from, idSavedMessage());
 };
 
 const handleBankDetails = async (from: string, input: string, merchant: Merchant): Promise<void> => {
     const parts = input.split(',').map(p => p.trim());
     
     if (parts.length < 2) {
-        await sendTextMessage(from, '⚠️ Use format: Bank, Account Number, Type');
+        await sendTextMessage(from, bankFormatWarningMessage());
         return;
     }
 
@@ -127,7 +136,7 @@ const handleBankDetails = async (from: string, input: string, merchant: Merchant
     const cleanAcc = acc.replace(/\D/g, '');
 
     if (cleanAcc.length < 6) {
-        await sendTextMessage(from, '⚠️ Invalid account number.');
+        await sendTextMessage(from, bankInvalidAccountMessage());
         return;
     }
 
@@ -136,15 +145,10 @@ const handleBankDetails = async (from: string, input: string, merchant: Merchant
         data: { bank_name: bank, bank_acc_no: cleanAcc, bank_type: type } 
     });
 
-    await sendButtons(from, 
-        `✅ ${bank} ****${cleanAcc.slice(-4)}\n\n` +
-        '📝 *Step 5/6: Hours*\n\n' +
-        'When are you open?',
-        [
-            { id: 'ob_hours_def', title: '✅ Standard Hours' },
-            { id: 'ob_hours_cust', title: '✏️ Custom Hours' }
-        ]
-    );
+    await sendButtons(from, bankSavedMessage(bank, cleanAcc.slice(-4)), [
+        { id: 'ob_hours_def', title: hoursStandardLabel() },
+        { id: 'ob_hours_cust', title: hoursCustomLabel() }
+    ]);
 };
 
 const handleHours = async (from: string, input: string, session: UserSession, merchant: Merchant): Promise<void> => {
@@ -161,7 +165,7 @@ const handleHours = async (from: string, input: string, session: UserSession, me
 
     if (input === 'ob_hours_cust') {
         await db.userSession.update({ where: { wa_id: from }, data: { active_prod_id: STATE.HOURS_MF } });
-        await sendTextMessage(from, '⏰ Mon-Fri hours?\n\n*HH:MM - HH:MM*\n\nExample: 08:00 - 18:00\nOr "closed"');
+        await sendTextMessage(from, hoursPromptMessage());
         return;
     }
 
@@ -172,11 +176,11 @@ const handleHours = async (from: string, input: string, session: UserSession, me
             const [o, c] = input.split('-').map(s => s.trim());
             await db.merchant.update({ where: { wa_id: from }, data: { open_time: o, close_time: c } });
         } else {
-            await sendTextMessage(from, '⚠️ Use: HH:MM - HH:MM');
+            await sendTextMessage(from, hoursFormatWarningMessage());
             return;
         }
         await db.userSession.update({ where: { wa_id: from }, data: { active_prod_id: STATE.HOURS_SAT } });
-        await sendTextMessage(from, '✅ Weekdays set.\n\nNow Saturday?\n\nOr "closed"');
+        await sendTextMessage(from, weekdayHoursSavedMessage());
         return;
     }
 
@@ -187,7 +191,7 @@ const handleHours = async (from: string, input: string, session: UserSession, me
             const [o, c] = input.split('-').map(s => s.trim());
             await db.merchant.update({ where: { wa_id: from }, data: { sat_open_time: o, sat_close_time: c, sun_open: false } });
         } else {
-            await sendTextMessage(from, '⚠️ Use: HH:MM - HH:MM');
+            await sendTextMessage(from, hoursFormatWarningMessage());
             return;
         }
         await db.userSession.update({ where: { wa_id: from }, data: { active_prod_id: null } });
@@ -196,24 +200,17 @@ const handleHours = async (from: string, input: string, session: UserSession, me
     }
 
     // Show hours menu if no state
-    await sendButtons(from, '📝 *Step 5/6: Hours*', [
-        { id: 'ob_hours_def', title: '✅ Standard Hours' },
-        { id: 'ob_hours_cust', title: '✏️ Custom Hours' }
+    await sendButtons(from, hoursStepMessage(), [
+        { id: 'ob_hours_def', title: hoursStandardLabel() },
+        { id: 'ob_hours_cust', title: hoursCustomLabel() }
     ]);
 };
 
 const showTerms = async (from: string): Promise<void> => {
-    await sendButtons(from, 
-        '📜 *Step 6/6: Terms*\n\n' +
-        '• Platform Fee: 7%\n' +
-        '• Payouts: Every Friday\n' +
-        '• Keep store open during hours\n\n' +
-        'Accept terms?',
-        [
-            { id: 'ob_accept', title: '✅ I Accept' },
-            { id: 'ob_cancel', title: '❌ Cancel' }
-        ]
-    );
+    await sendButtons(from, termsMessage(), [
+        { id: 'ob_accept', title: termsAcceptLabel() },
+        { id: 'ob_cancel', title: termsCancelLabel() }
+    ]);
 };
 
 const handleTerms = async (from: string, input: string, merchant: Merchant): Promise<void> => {
@@ -224,16 +221,10 @@ const handleTerms = async (from: string, input: string, merchant: Merchant): Pro
         });
         await db.userSession.update({ where: { wa_id: from }, data: { mode: 'MERCHANT', active_prod_id: null } });
 
-        await sendButtons(from, 
-            `🎉 *Congratulations!*\n\n` +
-            `*${merchant.trading_name}* is LIVE!\n` +
-            `📱 @${merchant.handle}\n\n` +
-            'Add your first product!',
-            [
-                { id: 'm_add_prod', title: '➕ Add Product' },
-                { id: 'm_dashboard', title: '🏪 Dashboard' }
-            ]
-        );
+        await sendButtons(from, termsAcceptedMessage(merchant.trading_name, merchant.handle), [
+            { id: 'm_add_prod', title: addProductLabel() },
+            { id: 'm_dashboard', title: dashboardLabel() }
+        ]);
         return;
     }
 

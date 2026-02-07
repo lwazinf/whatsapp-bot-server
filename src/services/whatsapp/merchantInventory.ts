@@ -1,5 +1,44 @@
 import { PrismaClient, Merchant, UserSession } from '@prisma/client';
 import { sendTextMessage, sendButtons, sendListMessage } from './sender';
+import {
+    actionsLabel,
+    addItemCancelledMessage,
+    addItemLabel,
+    addItemStartMessage,
+    backLabel,
+    cancelDeleteLabel,
+    cancelProductLabel,
+    confirmDeleteLabel,
+    confirmLiveFallbackMessage,
+    dashboardHomeLabel,
+    deleteConfirmMessage,
+    deleteLabel,
+    followPromptsMessage,
+    imagePromptMessage,
+    inStockLabel,
+    inventoryErrorMessage,
+    inventoryMenuMessage,
+    menuEmptyMessage,
+    menuItemRowDescription,
+    menuListTitle,
+    navLabel,
+    outOfStockLabel,
+    priceInvalidMessage,
+    priceSavedMessage,
+    productDeletedMessage,
+    productDetailsMessage,
+    productLiveMessage,
+    productNameInvalidMessage,
+    productNameSavedMessage,
+    productNotFoundMessage,
+    productStatusMessage,
+    publishLabel,
+    productsSectionTitle,
+    reviewMessage,
+    skipImageLabel,
+    viewItemsLabel,
+    viewMenuLabel
+} from './templates';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
@@ -27,10 +66,10 @@ export const handleInventoryActions = async (
         if (input === 'm_inventory' || input === 'p_back') {
             await clearState(from);
             const count = await db.product.count({ where: { merchant_id: merchant.id, status: 'ACTIVE' } });
-            await sendButtons(from, `📦 *Menu Manager*\n\n${count} active items`, [
-                { id: 'm_add_prod', title: '➕ Add Item' },
-                { id: 'p_view_all', title: '👀 View Menu' },
-                { id: 'm_dashboard', title: '🏠 Dashboard' }
+            await sendButtons(from, inventoryMenuMessage(count), [
+                { id: 'm_add_prod', title: addItemLabel() },
+                { id: 'p_view_all', title: viewMenuLabel() },
+                { id: 'm_dashboard', title: dashboardHomeLabel() }
             ]);
             return;
         }
@@ -44,7 +83,7 @@ export const handleInventoryActions = async (
             });
             
             if (products.length === 0) {
-                await sendTextMessage(from, '📭 Your menu is empty. Add your first item!');
+                await sendTextMessage(from, menuEmptyMessage());
                 await handleInventoryActions(from, 'm_inventory', session, merchant);
                 return;
             }
@@ -52,11 +91,13 @@ export const handleInventoryActions = async (
             const rows = products.map(p => ({
                 id: `edit_prod_${p.id}`,
                 title: p.name.substring(0, 24),
-                description: `R${p.price.toFixed(2)} • ${p.is_in_stock ? '🟢' : '🔴'}`
+                description: menuItemRowDescription(p.price, p.is_in_stock)
             }));
 
-            await sendListMessage(from, `📦 *Your Menu* (${products.length} items)`, '📋 View Items', [{ title: 'Products', rows }]);
-            await sendButtons(from, 'Actions:', [{ id: 'm_add_prod', title: '➕ Add Item' }, { id: 'p_back', title: '⬅️ Back' }]);
+            await sendListMessage(from, menuListTitle(products.length), viewItemsLabel(), [
+                { title: productsSectionTitle(), rows }
+            ]);
+            await sendButtons(from, actionsLabel(), [{ id: 'm_add_prod', title: addItemLabel() }, { id: 'p_back', title: backLabel() }]);
             return;
         }
 
@@ -64,13 +105,13 @@ export const handleInventoryActions = async (
         if (input.startsWith('edit_prod_')) {
             const pid = input.replace('edit_prod_', '');
             const p = await db.product.findUnique({ where: { id: pid } });
-            if (!p) { await sendTextMessage(from, '❌ Product not found.'); return; }
+            if (!p) { await sendTextMessage(from, productNotFoundMessage()); return; }
 
-            await sendButtons(from, `📦 *${p.name}*\n\nR${p.price.toFixed(2)}\n${p.is_in_stock ? '🟢 In Stock' : '🔴 Out of Stock'}`, [
-                { id: `toggle_${p.id}`, title: p.is_in_stock ? '🔴 Out of Stock' : '🟢 In Stock' },
-                { id: `delete_prod_${p.id}`, title: '🗑️ Delete' }
+            await sendButtons(from, productDetailsMessage(p.name, p.price, p.is_in_stock), [
+                { id: `toggle_${p.id}`, title: p.is_in_stock ? outOfStockLabel() : inStockLabel() },
+                { id: `delete_prod_${p.id}`, title: deleteLabel() }
             ]);
-            await sendButtons(from, 'Nav:', [{ id: 'p_view_all', title: '⬅️ Back' }]);
+            await sendButtons(from, navLabel(), [{ id: 'p_view_all', title: backLabel() }]);
             return;
         }
 
@@ -78,10 +119,10 @@ export const handleInventoryActions = async (
         if (input.startsWith('toggle_')) {
             const pid = input.replace('toggle_', '');
             const p = await db.product.findUnique({ where: { id: pid } });
-            if (!p || p.merchant_id !== merchant.id) { await sendTextMessage(from, '❌ Not found.'); return; }
+            if (!p || p.merchant_id !== merchant.id) { await sendTextMessage(from, confirmLiveFallbackMessage()); return; }
             
             const updated = await db.product.update({ where: { id: pid }, data: { is_in_stock: !p.is_in_stock } });
-            await sendTextMessage(from, `✅ *${updated.name}* is now ${updated.is_in_stock ? '🟢 In Stock' : '🔴 Out of Stock'}`);
+            await sendTextMessage(from, productStatusMessage(updated.name, updated.is_in_stock));
             await handleInventoryActions(from, 'p_view_all', session, merchant);
             return;
         }
@@ -90,12 +131,12 @@ export const handleInventoryActions = async (
         if (input.startsWith('delete_prod_')) {
             const pid = input.replace('delete_prod_', '');
             const p = await db.product.findUnique({ where: { id: pid } });
-            if (!p) { await sendTextMessage(from, '❌ Not found.'); return; }
+            if (!p) { await sendTextMessage(from, confirmLiveFallbackMessage()); return; }
             
             await setState(from, `${STATE.DELETE}${pid}`);
-            await sendButtons(from, `⚠️ Delete *${p.name}*?`, [
-                { id: `confirm_del_${pid}`, title: '🗑️ Yes, Delete' },
-                { id: 'cancel_delete', title: '❌ Cancel' }
+            await sendButtons(from, deleteConfirmMessage(p.name), [
+                { id: `confirm_del_${pid}`, title: confirmDeleteLabel() },
+                { id: 'cancel_delete', title: cancelDeleteLabel() }
             ]);
             return;
         }
@@ -105,7 +146,7 @@ export const handleInventoryActions = async (
             const p = await db.product.findUnique({ where: { id: pid } });
             if (p && p.merchant_id === merchant.id) {
                 await db.product.delete({ where: { id: pid } });
-                await sendTextMessage(from, `🗑️ *${p.name}* deleted.`);
+                await sendTextMessage(from, productDeletedMessage(p.name));
             }
             await clearState(from);
             await handleInventoryActions(from, 'p_view_all', session, merchant);
@@ -122,7 +163,7 @@ export const handleInventoryActions = async (
         
         if (input === 'm_add_prod') {
             await setState(from, STATE.NAME);
-            await sendTextMessage(from, '🛒 *Add New Item*\n\n*Step 1/3:* What is the product name?\n\n_Type "cancel" to exit_');
+            await sendTextMessage(from, addItemStartMessage());
             return;
         }
 
@@ -133,7 +174,7 @@ export const handleInventoryActions = async (
                 try { await db.product.delete({ where: { id: pid } }); } catch {}
             }
             await clearState(from);
-            await sendTextMessage(from, '❌ Cancelled.');
+            await sendTextMessage(from, addItemCancelledMessage());
             await handleInventoryActions(from, 'm_inventory', session, merchant);
             return;
         }
@@ -141,14 +182,14 @@ export const handleInventoryActions = async (
         // Step 1: Name
         if (state === STATE.NAME) {
             if (input.length < 2 || input.length > 50) {
-                await sendTextMessage(from, '⚠️ Name must be 2-50 characters.');
+                await sendTextMessage(from, productNameInvalidMessage());
                 return;
             }
             const product = await db.product.create({
                 data: { name: input.trim(), price: 0, merchant_id: merchant.id, is_in_stock: false, status: 'DRAFT' }
             });
             await setState(from, `${STATE.PRICE}${product.id}`);
-            await sendTextMessage(from, `✅ *${input}*\n\n*Step 2/3:* What is the price?\n\n_Example: 45.50_`);
+            await sendTextMessage(from, productNameSavedMessage(input.trim()));
             return;
         }
 
@@ -158,14 +199,14 @@ export const handleInventoryActions = async (
             const price = parseFloat(input.replace(',', '.').replace(/[^\d.]/g, ''));
             
             if (isNaN(price) || price <= 0 || price > 99999) {
-                await sendTextMessage(from, '⚠️ Enter a valid price (e.g., 45.50)');
+                await sendTextMessage(from, priceInvalidMessage());
                 return;
             }
 
             await db.product.update({ where: { id: pid }, data: { price } });
             await setState(from, `${STATE.IMAGE}${pid}`);
-            await sendButtons(from, `💰 R${price.toFixed(2)}\n\n*Step 3/3:* Send a photo of the item.`, [
-                { id: 'skip_image', title: '⏭️ Skip' }
+            await sendButtons(from, priceSavedMessage(price), [
+                { id: 'skip_image', title: skipImageLabel() }
             ]);
             return;
         }
@@ -180,20 +221,17 @@ export const handleInventoryActions = async (
             } else if (input === 'skip_image') {
                 imageUrl = null;
             } else {
-                await sendButtons(from, '⚠️ Send an image or skip.', [{ id: 'skip_image', title: '⏭️ Skip' }]);
+                await sendButtons(from, imagePromptMessage(), [{ id: 'skip_image', title: skipImageLabel() }]);
                 return;
             }
 
             const product = await db.product.update({ where: { id: pid }, data: { image_url: imageUrl } });
             await setState(from, `${STATE.PREVIEW}${pid}`);
 
-            await sendButtons(from, 
-                `🔍 *Review*\n\n📦 ${product.name}\n💰 R${product.price.toFixed(2)}\n${imageUrl ? '📸 Image added' : '📷 No image'}\n\nPublish?`,
-                [
-                    { id: `conf_live_${pid}`, title: '🚀 Make Live' },
-                    { id: `delete_prod_${pid}`, title: '❌ Cancel' }
-                ]
-            );
+            await sendButtons(from, reviewMessage(product.name, product.price, Boolean(imageUrl)), [
+                { id: `conf_live_${pid}`, title: publishLabel() },
+                { id: `delete_prod_${pid}`, title: cancelProductLabel() }
+            ]);
             return;
         }
 
@@ -202,21 +240,21 @@ export const handleInventoryActions = async (
             const pid = input.replace('conf_live_', '');
             await db.product.update({ where: { id: pid }, data: { is_in_stock: true, status: 'ACTIVE' } });
             await clearState(from);
-            await sendTextMessage(from, '🎉 Product is now live!');
+            await sendTextMessage(from, productLiveMessage());
             await handleInventoryActions(from, 'm_inventory', session, merchant);
             return;
         }
 
         // Fallback
         if (state) {
-            await sendTextMessage(from, '⚠️ Please follow the prompts or type *cancel*.');
+            await sendTextMessage(from, followPromptsMessage());
             return;
         }
 
     } catch (error: any) {
         console.error(`❌ Inventory Error: ${error.message}`);
         await clearState(from);
-        await sendTextMessage(from, '❌ Error occurred.');
+        await sendTextMessage(from, inventoryErrorMessage());
     }
 };
 

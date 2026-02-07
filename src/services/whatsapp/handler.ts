@@ -4,6 +4,15 @@ import { handleOnboardingAction } from './onboardingEngine';
 import { handleCustomerDiscovery } from './customerDiscovery';
 import { handleCustomerOrders } from './customerOrders';
 import { sendTextMessage, sendButtons } from './sender';
+import {
+    browseShopsLabel,
+    genericErrorMessage,
+    merchantNotFoundMessage,
+    myOrdersLabel,
+    startSellingMessage,
+    switchModeMessage,
+    welcomeMessage
+} from './templates';
 
 // Singleton PrismaClient
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
@@ -49,7 +58,7 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
                 where: { wa_id: from },
                 data: { mode: newMode }
             });
-            await sendTextMessage(from, `🔄 Switched to *${newMode}* mode.`);
+            await sendTextMessage(from, switchModeMessage(newMode));
             return;
         }
 
@@ -62,7 +71,7 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
         if (session.mode === 'MERCHANT') {
             if (!merchant) {
                 await db.userSession.update({ where: { wa_id: from }, data: { mode: 'CUSTOMER' } });
-                await sendTextMessage(from, '⚠️ Merchant profile not found. Switched to Customer mode.');
+                await sendTextMessage(from, merchantNotFoundMessage());
                 return;
             }
             await handleMerchantAction(from, input, session, merchant, message);
@@ -86,23 +95,18 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
                 where: { wa_id: from },
                 data: { mode: 'REGISTERING' }
             });
-            await sendTextMessage(from, 
-                '🏪 *Start Selling on Omeru!*\n\n' +
-                "Let's set up your shop.\n\n" +
-                '📝 *Step 1 of 6: Shop Name*\n' +
-                'What is your trading/shop name?'
-            );
+            await sendTextMessage(from, startSellingMessage());
             return;
         }
 
         // Default Customer Welcome
-        await sendButtons(from, '👋 Welcome to *Omeru*!\n\nWhat would you like to do?', [
-            { id: 'browse_shops', title: '🪪 Browse Shops' },
-            { id: 'c_my_orders', title: '📦 My Orders' }
+        await sendButtons(from, welcomeMessage(), [
+            { id: 'browse_shops', title: browseShopsLabel() },
+            { id: 'c_my_orders', title: myOrdersLabel() }
         ]);
 
     } catch (err: any) {
         console.error('❌ Handler Error:', err.message);
-        await sendTextMessage(from, '⚠️ Something went wrong. Please try again.');
+        await sendTextMessage(from, genericErrorMessage());
     }
 };
