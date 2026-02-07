@@ -34,7 +34,11 @@ const STATE = {
     LOGO: 'SET_LOGO',
     ADDRESS: 'SET_ADDR',
     HOURS_MF: 'SET_HRS_MF',
-    HOURS_SAT: 'SET_HRS_SAT'
+    HOURS_SAT: 'SET_HRS_SAT',
+    BRAND_NAME: 'SET_BRAND_NAME',
+    CURRENCY: 'SET_CURRENCY',
+    SUPPORT_NUMBER: 'SET_SUPPORT_NUMBER',
+    WELCOME_MESSAGE: 'SET_WELCOME_MESSAGE'
 };
 
 export const handleSettingsActions = async (
@@ -69,7 +73,11 @@ export const handleSettingsActions = async (
             await sendButtons(from, '👤 *Edit Profile*', [
                 { id: 's_bio', title: '📝 Description' },
                 { id: 's_logo', title: '📸 Logo' },
-                { id: 's_addr', title: '📍 Address' }
+                { id: 's_addr', title: '📍 Address' },
+                { id: 's_brand_name', title: '🏷️ Brand Name' },
+                { id: 's_currency', title: '💱 Currency' },
+                { id: 's_support_number', title: '☎️ Support Number' },
+                { id: 's_welcome_message', title: '👋 Welcome Message' }
             ]);
             await sendButtons(from, 'Nav:', [{ id: 's_back', title: '⬅️ Back' }]);
             return;
@@ -170,6 +178,108 @@ export const handleSettingsActions = async (
             });
             await clearState(from);
             await sendTextMessage(from, addr ? '✅ Address updated!' : '✅ Address cleared.');
+            await handleSettingsActions(from, 's_profile', session, merchant);
+            return;
+        }
+
+        // Brand Name
+        if (input === 's_brand_name') {
+            await setState(from, STATE.BRAND_NAME);
+            await sendTextMessage(
+                from,
+                `🏷️ *Brand Name*\n\nCurrent: ${merchant.brand_name || '_Not set_'}\n\nType your brand name (or "clear" to remove):`
+            );
+            return;
+        }
+
+        if (state === STATE.BRAND_NAME) {
+            const brandName = input.toLowerCase() === 'clear' ? null : input.substring(0, 60);
+            await db.merchant.update({ where: { id: merchant.id }, data: { brand_name: brandName } });
+            await clearState(from);
+            await sendTextMessage(from, brandName ? '✅ Brand name updated!' : '✅ Brand name cleared.');
+            await handleSettingsActions(from, 's_profile', session, merchant);
+            return;
+        }
+
+        // Currency
+        if (input === 's_currency') {
+            await setState(from, STATE.CURRENCY);
+            await sendTextMessage(
+                from,
+                `💱 *Currency*\n\nCurrent: ${merchant.currency || '_Not set_'}\n\nEnter ISO currency code (e.g. USD, ZAR) or "clear":`
+            );
+            return;
+        }
+
+        if (state === STATE.CURRENCY) {
+            if (input.toLowerCase() === 'clear') {
+                await db.merchant.update({ where: { id: merchant.id }, data: { currency: null } });
+                await clearState(from);
+                await sendTextMessage(from, '✅ Currency cleared.');
+                await handleSettingsActions(from, 's_profile', session, merchant);
+                return;
+            }
+
+            const currency = input.trim().toUpperCase();
+            if (!isValidCurrencyCode(currency)) {
+                await sendTextMessage(from, '⚠️ Please enter a valid 3-letter currency code (e.g. USD).');
+                return;
+            }
+
+            await db.merchant.update({ where: { id: merchant.id }, data: { currency } });
+            await clearState(from);
+            await sendTextMessage(from, '✅ Currency updated!');
+            await handleSettingsActions(from, 's_profile', session, merchant);
+            return;
+        }
+
+        // Support Number
+        if (input === 's_support_number') {
+            await setState(from, STATE.SUPPORT_NUMBER);
+            await sendTextMessage(
+                from,
+                `☎️ *Support Number*\n\nCurrent: ${merchant.support_number || '_Not set_'}\n\nEnter phone in E.164 format (e.g. +15551234567) or "clear":`
+            );
+            return;
+        }
+
+        if (state === STATE.SUPPORT_NUMBER) {
+            if (input.toLowerCase() === 'clear') {
+                await db.merchant.update({ where: { id: merchant.id }, data: { support_number: null } });
+                await clearState(from);
+                await sendTextMessage(from, '✅ Support number cleared.');
+                await handleSettingsActions(from, 's_profile', session, merchant);
+                return;
+            }
+
+            const supportNumber = input.trim();
+            if (!isValidPhoneNumber(supportNumber)) {
+                await sendTextMessage(from, '⚠️ Enter a valid phone number in E.164 format (e.g. +15551234567).');
+                return;
+            }
+
+            await db.merchant.update({ where: { id: merchant.id }, data: { support_number: supportNumber } });
+            await clearState(from);
+            await sendTextMessage(from, '✅ Support number updated!');
+            await handleSettingsActions(from, 's_profile', session, merchant);
+            return;
+        }
+
+        // Welcome Message
+        if (input === 's_welcome_message') {
+            await setState(from, STATE.WELCOME_MESSAGE);
+            await sendTextMessage(
+                from,
+                `👋 *Welcome Message*\n\nCurrent: ${merchant.welcome_message || '_Not set_'}\n\nType your welcome message (or "clear" to remove):`
+            );
+            return;
+        }
+
+        if (state === STATE.WELCOME_MESSAGE) {
+            const welcomeMessage = input.toLowerCase() === 'clear' ? null : input.substring(0, 200);
+            await db.merchant.update({ where: { id: merchant.id }, data: { welcome_message: welcomeMessage } });
+            await clearState(from);
+            await sendTextMessage(from, welcomeMessage ? '✅ Welcome message updated!' : '✅ Welcome message cleared.');
             await handleSettingsActions(from, 's_profile', session, merchant);
             return;
         }
@@ -283,3 +393,7 @@ const formatHours = (open: string | null, close: string | null): string => {
     if (!open || !close || (open === '00:00' && close === '00:00')) return 'Closed';
     return `${open} - ${close}`;
 };
+
+const isValidCurrencyCode = (value: string): boolean => /^[A-Z]{3}$/.test(value);
+
+const isValidPhoneNumber = (value: string): boolean => /^\+[1-9]\d{7,14}$/.test(value);
