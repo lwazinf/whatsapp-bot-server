@@ -55,6 +55,7 @@ model Merchant {
   status            MerchantStatus @default(ACTIVE)
   products          Product[]
   orders            Order[]
+  merchant_customers MerchantCustomer[]
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
 }
@@ -96,4 +97,17 @@ model OrderItem {
   product    Product @relation(fields: [product_id], references: [id])
   quantity   Int
   price      Float
+}
+
+model MerchantCustomer {
+  id                String   @id @default(cuid())
+  merchant_id       String
+  customer_id       String
+  merchant          Merchant @relation(fields: [merchant_id], references: [id])
+  marketing_opt_in  Boolean  @default(true)
+  last_broadcast_at DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([merchant_id, customer_id])
 }

@@ -24,6 +24,7 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
     const listId = message.interactive?.list_reply?.id;
     
     const input = String(buttonId || listId || textBody || '').trim();
+    const normalizedInput = input.toLowerCase();
 
     if (!input && message.type !== 'image' && message.type !== 'location') {
         console.log(`⚠️ Empty message from ${from}, skipping`);
@@ -43,7 +44,7 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
         console.log(`📩 [${session.mode}] ${from}: "${input}"`);
 
         // Global: Switch Modes
-        if (input.toLowerCase() === 'switch' || input === 'SwitchOmeru') {
+        if (normalizedInput === 'switch' || input === 'SwitchOmeru') {
             const newMode = session.mode === 'CUSTOMER' ? 'MERCHANT' : 'CUSTOMER';
             await db.userSession.update({
                 where: { wa_id: from },
@@ -70,6 +71,30 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
         }
 
         // Customer Routing
+        if (normalizedInput === 'stop' || normalizedInput === 'unsubscribe') {
+            const merchantCustomer = await db.merchantCustomer.findFirst({
+                where: { customer_id: from },
+                orderBy: { updatedAt: 'desc' },
+                include: { merchant: true }
+            });
+
+            if (!merchantCustomer) {
+                await sendTextMessage(from, '⚠️ We could not find a shop to unsubscribe from.');
+                return;
+            }
+
+            await db.merchantCustomer.update({
+                where: { id: merchantCustomer.id },
+                data: { marketing_opt_in: false }
+            });
+
+            await sendTextMessage(
+                from,
+                `✅ You have been unsubscribed from *${merchantCustomer.merchant.trading_name}* marketing messages.`
+            );
+            return;
+        }
+
         if (input.startsWith('@') || input === 'browse_shops') {
             await handleCustomerDiscovery(from, input);
             return;
@@ -81,7 +106,7 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
         }
 
         // Start merchant registration
-        if (input.toLowerCase() === 'sell' || input.toLowerCase() === 'register') {
+        if (normalizedInput === 'sell' || normalizedInput === 'register') {
             await db.userSession.update({
                 where: { wa_id: from },
                 data: { mode: 'REGISTERING' }

@@ -31,6 +31,12 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
             return;
         }
 
+        await db.merchantCustomer.upsert({
+            where: { merchant_id_customer_id: { merchant_id: merchant.id, customer_id: from } },
+            update: { updatedAt: new Date() },
+            create: { merchant_id: merchant.id, customer_id: from, marketing_opt_in: true }
+        });
+
         const products = await db.product.findMany({ 
             where: { 
                 merchant_id: merchant.id, 
