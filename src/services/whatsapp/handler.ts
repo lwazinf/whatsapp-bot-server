@@ -7,6 +7,7 @@ import { sendTextMessage, sendButtons } from './sender';
 import { handleAdminAction, isAdminNumber } from './adminEngine';
 import { PLATFORM_NAME, PLATFORM_SWITCH_CODE, OWNER_INVITES_REQUIRED } from './config';
 import { normalizeWaId } from './waId';
+import { showMerchantDashboard } from './merchantDashboard';
 
 // Singleton PrismaClient
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
@@ -42,7 +43,14 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
             create: { wa_id: from, mode: 'CUSTOMER' }
         });
         
-        const merchant = await db.merchant.findUnique({ where: { wa_id: from } });
+        let merchant = await db.merchant.findUnique({ where: { wa_id: from } });
+        if (!merchant) {
+            const ownerRecord = await db.merchantOwner.findFirst({
+                where: { wa_id: normalizedFrom },
+                include: { merchant: true }
+            });
+            merchant = ownerRecord?.merchant || null;
+        }
         const invite = OWNER_INVITES_REQUIRED
             ? await db.merchantInvite.findUnique({ where: { wa_id: normalizedFrom } })
             : null;
@@ -62,6 +70,25 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
 
         if (isAdminNumber(from) && (session.state?.startsWith('ADMIN_') || input === 'admin' || input === 'admin_menu' || input === 'owners')) {
             await handleAdminAction(from, input, session);
+            return;
+        }
+
+        const adminHandle = parseAdminHandle(input);
+        if (adminHandle) {
+            const targetMerchant = await db.merchant.findUnique({ where: { handle: adminHandle } });
+            if (!targetMerchant) {
+                await sendTextMessage(from, '❌ Store admin handle not found.');
+                return;
+            }
+            const ownerRecord = await db.merchantOwner.findFirst({
+                where: { merchant_id: targetMerchant.id, wa_id: normalizedFrom }
+            });
+            if (!ownerRecord) {
+                await sendTextMessage(from, '⛔ You are not authorized for this store.');
+                return;
+            }
+            await db.userSession.update({ where: { wa_id: from }, data: { mode: 'MERCHANT' } });
+            await showMerchantDashboard(from, targetMerchant);
             return;
         }
 
@@ -125,4 +152,15 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
         console.error('❌ Handler Error:', err.message);
         await sendTextMessage(from, '⚠️ Something went wrong. Please try again.');
     }
+};
+
+const parseAdminHandle = (input: string): string | null => {
+    if (!input.startsWith('@') || !input.endsWith('_admin')) {
+        return null;
+    }
+    const handle = input.slice(1, -6).trim();
+    if (handle.length < 3) {
+        return null;
+    }
+    return handle;
 };

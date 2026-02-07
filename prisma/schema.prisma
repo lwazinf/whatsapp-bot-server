@@ -61,8 +61,22 @@ model Merchant {
   status            MerchantStatus @default(ACTIVE)
   products          Product[]
   orders            Order[]
+  owners            MerchantOwner[]
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
+}
+
+model MerchantOwner {
+  id         String   @id @default(cuid())
+  merchant_id String
+  merchant   Merchant @relation(fields: [merchant_id], references: [id])
+  wa_id      String
+  role       String   @default("OWNER")
+  is_admin   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([merchant_id, wa_id])
 }
 
 model MerchantInvite {

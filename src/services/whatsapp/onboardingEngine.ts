@@ -220,13 +220,28 @@ const showTerms = async (from: string): Promise<void> => {
 
 const handleTerms = async (from: string, input: string, merchant: Merchant): Promise<void> => {
     if (input === 'ob_accept') {
-        await db.merchant.update({ 
+        const updatedMerchant = await db.merchant.update({ 
             where: { wa_id: from }, 
             data: { accepted_terms: true, status: MerchantStatus.ACTIVE } 
         });
         await db.merchantInvite.updateMany({
             where: { wa_id: normalizeWaId(from) },
             data: { status: 'CLAIMED', claimed_at: new Date() }
+        });
+        await db.merchantOwner.upsert({
+            where: {
+                merchant_id_wa_id: {
+                    merchant_id: updatedMerchant.id,
+                    wa_id: normalizeWaId(from)
+                }
+            },
+            update: { is_admin: true, role: 'OWNER' },
+            create: {
+                merchant_id: updatedMerchant.id,
+                wa_id: normalizeWaId(from),
+                role: 'OWNER',
+                is_admin: true
+            }
         });
         await db.userSession.update({ where: { wa_id: from }, data: { mode: 'MERCHANT', active_prod_id: null } });
 

@@ -1,5 +1,6 @@
 import { PrismaClient, Merchant, UserSession } from '@prisma/client';
-import { sendTextMessage, sendButtons } from './sender';
+import { sendTextMessage, sendButtons, sendListMessage } from './sender';
+import { normalizeWaId } from './waId';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
@@ -10,7 +11,8 @@ const STATE = {
     LOGO: 'SET_LOGO',
     ADDRESS: 'SET_ADDR',
     HOURS_MF: 'SET_HRS_MF',
-    HOURS_SAT: 'SET_HRS_SAT'
+    HOURS_SAT: 'SET_HRS_SAT',
+    OWNER_ADD: 'SET_OWNER_ADD'
 };
 
 export const handleSettingsActions = async (
@@ -33,8 +35,12 @@ export const handleSettingsActions = async (
                 [
                     { id: 's_profile', title: '👤 Edit Profile' },
                     { id: 's_hours', title: '⏰ Hours' },
-                    { id: 's_toggle', title: merchant.manual_closed ? '🔓 Open Shop' : '🔒 Close Shop' }
+                    { id: 's_owners', title: '👥 Owners' }
                 ]
+            );
+            await sendButtons(from, 'Actions:', [
+                { id: 's_toggle', title: merchant.manual_closed ? '🔓 Open Shop' : '🔒 Close Shop' }
+            ]
             );
             await sendButtons(from, 'Nav:', [{ id: 'm_dashboard', title: '🏠 Dashboard' }]);
             return;
@@ -48,6 +54,84 @@ export const handleSettingsActions = async (
                 { id: 's_addr', title: '📍 Address' }
             ]);
             await sendButtons(from, 'Nav:', [{ id: 's_back', title: '⬅️ Back' }]);
+            return;
+        }
+
+        if (input === 's_owners') {
+            const owners = await db.merchantOwner.findMany({
+                where: { merchant_id: merchant.id },
+                orderBy: { createdAt: 'asc' }
+            });
+            const ownerLines = owners.map(owner => `• ${owner.wa_id}${owner.is_admin ? ' (admin)' : ''}`);
+
+            await sendTextMessage(
+                from,
+                `👥 *Store Owners*\n\n${ownerLines.length > 0 ? ownerLines.join('\n') : '_No owners yet_'}`
+            );
+            await sendButtons(from, 'Owner Actions:', [
+                { id: 's_owner_add', title: '➕ Add Owner' },
+                { id: 's_owner_remove', title: '🗑️ Remove' }
+            ]);
+            await sendButtons(from, 'Nav:', [{ id: 's_back', title: '⬅️ Back' }]);
+            return;
+        }
+
+        if (input === 's_owner_add') {
+            await setState(from, STATE.OWNER_ADD);
+            await sendTextMessage(from, '👥 Add owner\n\nSend phone number (e.g., +27712345678).');
+            return;
+        }
+
+        if (state === STATE.OWNER_ADD) {
+            const normalized = normalizeWaId(input);
+            if (normalized.length < 9) {
+                await sendTextMessage(from, '⚠️ Please provide a valid phone number.');
+                return;
+            }
+            await db.merchantOwner.upsert({
+                where: { merchant_id_wa_id: { merchant_id: merchant.id, wa_id: normalized } },
+                update: { is_admin: true, role: 'OWNER' },
+                create: { merchant_id: merchant.id, wa_id: normalized, is_admin: true, role: 'OWNER' }
+            });
+            await clearState(from);
+            await sendTextMessage(from, `✅ Added owner ${normalized}.`);
+            await handleSettingsActions(from, 's_owners', session, merchant);
+            return;
+        }
+
+        if (input === 's_owner_remove') {
+            const owners = await db.merchantOwner.findMany({
+                where: { merchant_id: merchant.id },
+                orderBy: { createdAt: 'asc' }
+            });
+            if (owners.length === 0) {
+                await sendTextMessage(from, '📭 No owners to remove.');
+                return;
+            }
+
+            await sendListMessage(
+                from,
+                '🗑️ *Remove Owner*',
+                'Select',
+                [
+                    {
+                        title: 'Owners',
+                        rows: owners.map(owner => ({
+                            id: `s_owner_remove_${owner.id}`,
+                            title: owner.wa_id,
+                            description: owner.is_admin ? 'Admin' : undefined
+                        }))
+                    }
+                ]
+            );
+            return;
+        }
+
+        if (input.startsWith('s_owner_remove_')) {
+            const ownerId = input.replace('s_owner_remove_', '');
+            await db.merchantOwner.delete({ where: { id: ownerId } });
+            await sendTextMessage(from, '✅ Owner removed.');
+            await handleSettingsActions(from, 's_owners', session, merchant);
             return;
         }
 
