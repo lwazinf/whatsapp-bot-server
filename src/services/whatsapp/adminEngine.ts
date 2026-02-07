@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
@@ -15,7 +15,7 @@ const logAudit = async ({
     action: string;
     entityType: string;
     entityId?: string;
-    metadata?: Record<string, unknown> | null;
+    metadata?: Prisma.InputJsonValue | null;
 }): Promise<void> => {
     await db.auditLog.create({
         data: {
@@ -31,27 +31,31 @@ const logAudit = async ({
 export const logInviteAdded = async (
     actorWaId: string,
     inviteeWaId: string,
-    metadata?: Record<string, unknown>
+    metadata?: Prisma.InputJsonValue
 ): Promise<void> => {
+    const extraMetadata =
+        metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {};
     await logAudit({
         actorWaId,
         action: 'INVITE_ADDED',
         entityType: 'INVITE',
         entityId: inviteeWaId,
-        metadata: { invitee_wa_id: inviteeWaId, ...metadata }
+        metadata: { invitee_wa_id: inviteeWaId, ...extraMetadata }
     });
 };
 
 export const logInviteRevoked = async (
     actorWaId: string,
     inviteeWaId: string,
-    metadata?: Record<string, unknown>
+    metadata?: Prisma.InputJsonValue
 ): Promise<void> => {
+    const extraMetadata =
+        metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {};
     await logAudit({
         actorWaId,
         action: 'INVITE_REVOKED',
         entityType: 'INVITE',
         entityId: inviteeWaId,
-        metadata: { invitee_wa_id: inviteeWaId, ...metadata }
+        metadata: { invitee_wa_id: inviteeWaId, ...extraMetadata }
     });
 };

@@ -1,4 +1,4 @@
-import { PrismaClient, Merchant, UserSession } from '@prisma/client';
+import { Prisma, PrismaClient, Merchant, UserSession } from '@prisma/client';
 import { sendTextMessage, sendButtons, sendListMessage } from './sender';
 import { formatCurrency } from './messageTemplates';
 import { getPlatformBranding } from './platformBranding';
@@ -18,7 +18,7 @@ const logAudit = async ({
     action: string;
     entityType: string;
     entityId?: string;
-    metadata?: Record<string, unknown> | null;
+    metadata?: Prisma.InputJsonValue | null;
 }): Promise<void> => {
     await db.auditLog.create({
         data: {
