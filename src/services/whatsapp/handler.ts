@@ -1,4 +1,4 @@
-import { PrismaClient, MerchantStatus } from '@prisma/client';
+import { PrismaClient, Merchant, MerchantStatus } from '@prisma/client';
 import { handleMerchantAction } from './merchantEngine';
 import { handleOnboardingAction } from './onboardingEngine';
 import { handleCustomerDiscovery } from './customerDiscovery';
@@ -38,9 +38,38 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
             create: { wa_id: from, mode: 'CUSTOMER' }
         });
         
-        const merchant = await db.merchant.findUnique({ where: { wa_id: from } });
+        const merchantByWaId = await db.merchant.findUnique({ where: { wa_id: from } });
+        const merchantByOwner = merchantByWaId
+            ? null
+            : await db.merchant.findFirst({ where: { owner_wa_ids: { has: from } } });
+        const merchant = merchantByWaId || merchantByOwner;
 
         console.log(`📩 [${session.mode}] ${from}: "${input}"`);
+
+        // Merchant Admin Access via @handle_admin
+        const adminMatch = input.match(/^@([a-z0-9]+)_admin$/i);
+        if (adminMatch) {
+            const handle = adminMatch[1].toLowerCase();
+            const targetMerchant = await db.merchant.findUnique({ where: { handle } });
+
+            if (!targetMerchant) {
+                await sendTextMessage(from, `❌ Shop *@${handle}* not found.`);
+                return;
+            }
+
+            if (!isAuthorizedOwner(targetMerchant, from)) {
+                await sendTextMessage(from, '❌ You are not authorized to access this merchant.');
+                return;
+            }
+
+            const updatedSession = await db.userSession.update({
+                where: { wa_id: from },
+                data: { mode: 'MERCHANT', active_prod_id: null }
+            });
+
+            await handleMerchantAction(from, 'm_dashboard', updatedSession, targetMerchant, message);
+            return;
+        }
 
         // Global: Switch Modes
         if (input.toLowerCase() === 'switch' || input === 'SwitchOmeru') {
@@ -63,6 +92,11 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
             if (!merchant) {
                 await db.userSession.update({ where: { wa_id: from }, data: { mode: 'CUSTOMER' } });
                 await sendTextMessage(from, '⚠️ Merchant profile not found. Switched to Customer mode.');
+                return;
+            }
+            if (!isAuthorizedOwner(merchant, from)) {
+                await db.userSession.update({ where: { wa_id: from }, data: { mode: 'CUSTOMER' } });
+                await sendTextMessage(from, '⚠️ Unauthorized owner. Switched to Customer mode.');
                 return;
             }
             await handleMerchantAction(from, input, session, merchant, message);
@@ -105,4 +139,8 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
         console.error('❌ Handler Error:', err.message);
         await sendTextMessage(from, '⚠️ Something went wrong. Please try again.');
     }
+};
+
+const isAuthorizedOwner = (merchant: Merchant, waId: string): boolean => {
+    return merchant.wa_id === waId || merchant.owner_wa_ids?.includes(waId);
 };

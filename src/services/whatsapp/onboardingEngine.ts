@@ -74,7 +74,7 @@ const handleTradingName = async (from: string, input: string): Promise<void> => 
     await db.merchant.upsert({
         where: { wa_id: from },
         update: { trading_name: input.trim(), handle },
-        create: { wa_id: from, trading_name: input.trim(), handle, status: MerchantStatus.ONBOARDING }
+        create: { wa_id: from, trading_name: input.trim(), handle, status: MerchantStatus.ONBOARDING, owner_wa_ids: [from] }
     });
 
     await sendTextMessage(from, 

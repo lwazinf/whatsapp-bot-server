@@ -35,6 +35,7 @@ model UserSession {
 model Merchant {
   id                String         @id @default(cuid())
   wa_id             String         @unique
+  owner_wa_ids      String[]       @default([])
   handle            String         @unique
   trading_name      String
   legal_entity_name String?

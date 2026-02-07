@@ -10,7 +10,9 @@ const STATE = {
     LOGO: 'SET_LOGO',
     ADDRESS: 'SET_ADDR',
     HOURS_MF: 'SET_HRS_MF',
-    HOURS_SAT: 'SET_HRS_SAT'
+    HOURS_SAT: 'SET_HRS_SAT',
+    OWNER_ADD: 'SET_OWNER_ADD',
+    OWNER_REMOVE: 'SET_OWNER_REMOVE'
 };
 
 export const handleSettingsActions = async (
@@ -33,6 +35,7 @@ export const handleSettingsActions = async (
                 [
                     { id: 's_profile', title: '👤 Edit Profile' },
                     { id: 's_hours', title: '⏰ Hours' },
+                    { id: 's_owners', title: '👥 Owners' },
                     { id: 's_toggle', title: merchant.manual_closed ? '🔓 Open Shop' : '🔒 Close Shop' }
                 ]
             );
@@ -51,6 +54,30 @@ export const handleSettingsActions = async (
             return;
         }
 
+        // Owners Menu
+        if (input === 's_owners') {
+            await clearState(from);
+            const ownerSummary = formatOwners(merchant);
+            await sendButtons(from, `👥 *Owners*\n\n${ownerSummary}`, [
+                { id: 's_owner_add', title: '➕ Add Owner' },
+                { id: 's_owner_remove', title: '➖ Remove Owner' }
+            ]);
+            await sendButtons(from, 'Nav:', [{ id: 's_back', title: '⬅️ Back' }]);
+            return;
+        }
+
+        if (input === 's_owner_add') {
+            await setState(from, STATE.OWNER_ADD);
+            await sendTextMessage(from, '➕ *Add Owner*\n\nSend the WhatsApp number (digits only, e.g. 27831234567).');
+            return;
+        }
+
+        if (input === 's_owner_remove') {
+            await setState(from, STATE.OWNER_REMOVE);
+            await sendTextMessage(from, '➖ *Remove Owner*\n\nSend the WhatsApp number to remove.');
+            return;
+        }
+
         // Bio
         if (input === 's_bio') {
             await setState(from, STATE.BIO);
@@ -64,6 +91,44 @@ export const handleSettingsActions = async (
             await clearState(from);
             await sendTextMessage(from, newBio ? '✅ Description updated!' : '✅ Description cleared.');
             await handleSettingsActions(from, 's_profile', session, merchant);
+            return;
+        }
+
+        if (state === STATE.OWNER_ADD) {
+            const waId = normalizeWaId(input);
+            if (!waId) {
+                await sendTextMessage(from, '⚠️ Please send a valid WhatsApp number.');
+                return;
+            }
+            const owners = uniqueOwners(merchant, waId);
+            await db.merchant.update({ where: { id: merchant.id }, data: { owner_wa_ids: owners } });
+            await clearState(from);
+            await sendTextMessage(from, `✅ Added ${waId} as an owner.`);
+            const updated = await db.merchant.findUnique({ where: { id: merchant.id } });
+            await handleSettingsActions(from, 's_owners', session, updated!);
+            return;
+        }
+
+        if (state === STATE.OWNER_REMOVE) {
+            const waId = normalizeWaId(input);
+            if (!waId) {
+                await sendTextMessage(from, '⚠️ Please send a valid WhatsApp number.');
+                return;
+            }
+            if (waId === merchant.wa_id) {
+                await sendTextMessage(from, '⚠️ You cannot remove the primary owner.');
+                return;
+            }
+            if (!merchant.owner_wa_ids?.includes(waId)) {
+                await sendTextMessage(from, '⚠️ That number is not an owner.');
+                return;
+            }
+            const remaining = new Set([merchant.wa_id, ...merchant.owner_wa_ids.filter(id => id !== waId)]);
+            await db.merchant.update({ where: { id: merchant.id }, data: { owner_wa_ids: Array.from(remaining) } });
+            await clearState(from);
+            await sendTextMessage(from, `✅ Removed ${waId}.`);
+            const updated = await db.merchant.findUnique({ where: { id: merchant.id } });
+            await handleSettingsActions(from, 's_owners', session, updated!);
             return;
         }
 
@@ -230,4 +295,21 @@ const clearState = async (from: string) => {
 const formatHours = (open: string | null, close: string | null): string => {
     if (!open || !close || (open === '00:00' && close === '00:00')) return 'Closed';
     return `${open} - ${close}`;
+};
+
+const normalizeWaId = (input: string): string | null => {
+    const digits = input.replace(/\D/g, '');
+    if (digits.length < 10 || digits.length > 15) return null;
+    return digits;
+};
+
+const uniqueOwners = (merchant: Merchant, newOwner: string): string[] => {
+    const owners = new Set([merchant.wa_id, ...(merchant.owner_wa_ids ?? []), newOwner]);
+    return Array.from(owners);
+};
+
+const formatOwners = (merchant: Merchant): string => {
+    const owners = uniqueOwners(merchant, merchant.wa_id);
+    const lines = owners.map(id => (id === merchant.wa_id ? `• ${id} (primary)` : `• ${id}`));
+    return lines.join('\n') || '_No owners set_';
 };

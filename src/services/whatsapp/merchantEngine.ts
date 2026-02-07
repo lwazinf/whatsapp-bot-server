@@ -21,6 +21,12 @@ export const handleMerchantAction = async (
     message?: any
 ): Promise<void> => {
     try {
+        if (!isAuthorizedOwner(merchant, from)) {
+            await db.userSession.update({ where: { wa_id: from }, data: { mode: 'CUSTOMER', active_prod_id: null } });
+            await sendTextMessage(from, '⚠️ Unauthorized owner. Switched to Customer mode.');
+            return;
+        }
+
         // Dashboard
         if (input === 'm_dashboard' || input.toLowerCase() === 'menu' || input.toLowerCase() === 'home') {
             await showMerchantDashboard(from, merchant);
@@ -87,4 +93,8 @@ export const handleMerchantAction = async (
 
 const matchesPrefix = (input: string, prefixes: string[]): boolean => {
     return prefixes.some(p => input === p || input.startsWith(p));
+};
+
+const isAuthorizedOwner = (merchant: Merchant, waId: string): boolean => {
+    return merchant.wa_id === waId || merchant.owner_wa_ids?.includes(waId);
 };
