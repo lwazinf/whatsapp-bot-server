@@ -5,6 +5,30 @@ const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db;
 
+const logAudit = async ({
+    actorWaId,
+    action,
+    entityType,
+    entityId,
+    metadata
+}: {
+    actorWaId: string;
+    action: string;
+    entityType: string;
+    entityId?: string;
+    metadata?: Record<string, unknown> | null;
+}): Promise<void> => {
+    await db.auditLog.create({
+        data: {
+            actor_wa_id: actorWaId,
+            action,
+            entity_type: entityType,
+            entity_id: entityId,
+            metadata_json: metadata ?? undefined
+        }
+    });
+};
+
 const STATE = {
     BIO: 'SET_BIO',
     LOGO: 'SET_LOGO',
@@ -61,6 +85,13 @@ export const handleSettingsActions = async (
         if (state === STATE.BIO) {
             const newBio = input.toLowerCase() === 'clear' ? null : input.substring(0, 200);
             await db.merchant.update({ where: { id: merchant.id }, data: { description: newBio } });
+            await logAudit({
+                actorWaId: from,
+                action: newBio ? 'MERCHANT_DESCRIPTION_UPDATED' : 'MERCHANT_DESCRIPTION_CLEARED',
+                entityType: 'MERCHANT',
+                entityId: merchant.id,
+                metadata: { description: newBio }
+            });
             await clearState(from);
             await sendTextMessage(from, newBio ? '✅ Description updated!' : '✅ Description cleared.');
             await handleSettingsActions(from, 's_profile', session, merchant);
@@ -80,6 +111,13 @@ export const handleSettingsActions = async (
         if (state === STATE.LOGO) {
             if (message?.type === 'image' && message?.image?.id) {
                 await db.merchant.update({ where: { id: merchant.id }, data: { image_url: message.image.id } });
+                await logAudit({
+                    actorWaId: from,
+                    action: 'MERCHANT_LOGO_UPDATED',
+                    entityType: 'MERCHANT',
+                    entityId: merchant.id,
+                    metadata: { image_url: message.image.id }
+                });
                 await clearState(from);
                 await sendTextMessage(from, '✅ Logo updated!');
                 await handleSettingsActions(from, 's_profile', session, merchant);
@@ -87,6 +125,13 @@ export const handleSettingsActions = async (
             }
             if (input === 's_clear_logo') {
                 await db.merchant.update({ where: { id: merchant.id }, data: { image_url: null } });
+                await logAudit({
+                    actorWaId: from,
+                    action: 'MERCHANT_LOGO_REMOVED',
+                    entityType: 'MERCHANT',
+                    entityId: merchant.id,
+                    metadata: { image_url: null }
+                });
                 await clearState(from);
                 await sendTextMessage(from, '✅ Logo removed.');
                 await handleSettingsActions(from, 's_profile', session, merchant);
@@ -116,6 +161,13 @@ export const handleSettingsActions = async (
                 addr = null;
             }
             await db.merchant.update({ where: { id: merchant.id }, data: { address: addr } });
+            await logAudit({
+                actorWaId: from,
+                action: addr ? 'MERCHANT_ADDRESS_UPDATED' : 'MERCHANT_ADDRESS_CLEARED',
+                entityType: 'MERCHANT',
+                entityId: merchant.id,
+                metadata: { address: addr }
+            });
             await clearState(from);
             await sendTextMessage(from, addr ? '✅ Address updated!' : '✅ Address cleared.');
             await handleSettingsActions(from, 's_profile', session, merchant);

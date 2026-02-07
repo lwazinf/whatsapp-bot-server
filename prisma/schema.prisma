@@ -97,3 +97,13 @@ model OrderItem {
   quantity   Int
   price      Float
 }
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  actor_wa_id   String
+  action        String
+  entity_type   String
+  entity_id     String?
+  metadata_json Json?
+  createdAt     DateTime @default(now())
+}
