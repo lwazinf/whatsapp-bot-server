@@ -1,5 +1,7 @@
 import { PrismaClient, OrderStatus } from '@prisma/client';
 import { sendButtons } from '../whatsapp/sender';
+import { formatCurrency } from '../whatsapp/messageTemplates';
+import { getPlatformBranding } from '../whatsapp/platformBranding';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
@@ -12,13 +14,14 @@ export const checkStaleOrders = async (): Promise<void> => {
     try {
         const threshold = new Date(Date.now() - STALE_MINUTES * 60 * 1000);
 
+        const platformBranding = await getPlatformBranding(db);
         const orders = await db.order.findMany({
             where: {
                 status: { in: [OrderStatus.PENDING, OrderStatus.PAID] },
                 createdAt: { lt: threshold },
                 alert_count: { lt: MAX_ALERTS }
             },
-            include: { merchant: true }
+            include: { merchant: { include: { branding: true } } }
         });
 
         if (orders.length === 0) {
@@ -36,7 +39,7 @@ export const checkStaleOrders = async (): Promise<void> => {
 
             await sendButtons(
                 order.merchant.wa_id,
-                `🔔 *Order Alert*\n\n📦 #${order.id.slice(-5)}\n⏱️ ${mins}m waiting\n💰 R${order.total.toFixed(2)}\n\n_Alert ${alertNum}/${MAX_ALERTS}_`,
+                `🔔 *Order Alert*\n\n📦 #${order.id.slice(-5)}\n⏱️ ${mins}m waiting\n💰 ${formatCurrency(order.total, { merchant: order.merchant, merchantBranding: order.merchant.branding, platform: platformBranding })}\n\n_Alert ${alertNum}/${MAX_ALERTS}_`,
                 [
                     { id: `view_kitchen_${order.id}`, title: '👨‍🍳 View' },
                     { id: `ready_${order.id}`, title: '✅ Ready' }

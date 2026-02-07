@@ -97,6 +97,7 @@ export const showMerchantDashboard = async (to: string, merchant: Merchant): Pro
             { id: 'm_stats', title: '📊 Stats' }
         ]);
         await sendButtons(to, 'More options:', [
+            { id: 'm_broadcast', title: '📣 Broadcast' },
             { id: 'm_settings', title: '🛠️ Settings' }
         ]);
 

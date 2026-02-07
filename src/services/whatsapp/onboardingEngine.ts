@@ -1,5 +1,6 @@
 import { PrismaClient, MerchantStatus, Merchant, UserSession } from '@prisma/client';
 import { sendTextMessage, sendButtons } from './sender';
+import { getPlatformSettings } from './platformBranding';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
@@ -74,10 +75,16 @@ const handleTradingName = async (from: string, input: string): Promise<void> => 
     const handle = await generateHandle(tradingName);
     const adminHandle = await generateAdminHandle(handle, customAdminHandle, from);
     
-    await db.merchant.upsert({
+    const merchantRecord = await db.merchant.upsert({
         where: { wa_id: from },
         update: { trading_name: tradingName.trim(), handle, admin_handle: adminHandle },
         create: { wa_id: from, trading_name: tradingName.trim(), handle, admin_handle: adminHandle, status: MerchantStatus.ONBOARDING }
+    });
+
+    await db.merchantOwner.upsert({
+        where: { merchant_id_wa_id: { merchant_id: merchantRecord.id, wa_id: from } },
+        update: { is_active: true, role: 'OWNER' },
+        create: { merchant_id: merchantRecord.id, wa_id: from, role: 'OWNER' }
     });
 
     await sendTextMessage(from, 
@@ -207,10 +214,12 @@ const handleHours = async (from: string, input: string, session: UserSession, me
 };
 
 const showTerms = async (from: string): Promise<void> => {
+    const settings = await getPlatformSettings(db);
+    const feePercentage = Math.round(settings.platformFee * 100);
     await sendButtons(from, 
         '📜 *Step 6/6: Terms*\n\n' +
-        '• Platform Fee: 7%\n' +
-        '• Payouts: Every Friday\n' +
+        `• Platform Fee: ${feePercentage}%\n` +
+        `• Payouts: Every ${settings.payoutDay}\n` +
         '• Keep store open during hours\n\n' +
         'Accept terms?',
         [
@@ -225,6 +234,10 @@ const handleTerms = async (from: string, input: string, merchant: Merchant): Pro
         await db.merchant.update({ 
             where: { wa_id: from }, 
             data: { accepted_terms: true, status: MerchantStatus.ACTIVE } 
+        });
+        await db.merchantInvite.updateMany({
+            where: { invited_wa_id: from, merchant_id: merchant.id, status: 'PENDING' },
+            data: { status: 'ACCEPTED', accepted_at: new Date(), revoked_at: null }
         });
         await db.userSession.update({ where: { wa_id: from }, data: { mode: 'MERCHANT', active_prod_id: null } });
 

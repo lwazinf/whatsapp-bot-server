@@ -3,7 +3,10 @@ import { handleInventoryActions } from './merchantInventory';
 import { handleKitchenActions } from './merchantKitchen';
 import { handleSettingsActions } from './merchantSettings';
 import { getMerchantStats, showMerchantDashboard } from './merchantDashboard';
+import { handleBroadcastActions } from './merchantBroadcast';
 import { sendButtons, sendTextMessage } from './sender';
+import { formatCurrency } from './messageTemplates';
+import { getPlatformBranding } from './platformBranding';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
@@ -29,10 +32,13 @@ const INVENTORY_PREFIXES = [
     'add_variant_',
     'edit_variant_',
     'variant_field_',
-    'variant_delete_'
+    'variant_delete_',
+    'm_archived',
+    'arch_'
 ];
 const KITCHEN_PREFIXES = ['m_kitchen', 'k_', 'ready_', 'collected_', 'view_kitchen_'];
 const SETTINGS_PREFIXES = ['m_settings', 's_', 'h_', 'm_edit_hours', 'ob_hours'];
+const BROADCAST_PREFIXES = ['m_broadcast', 'b_'];
 
 export const handleMerchantAction = async (
     from: string, 
@@ -42,6 +48,8 @@ export const handleMerchantAction = async (
     message?: any
 ): Promise<void> => {
     try {
+        const platformBranding = await getPlatformBranding(db);
+        const merchantBranding = await db.merchantBranding.findUnique({ where: { merchant_id: merchant.id } });
         // Dashboard
         if (input === 'm_dashboard' || input.toLowerCase() === 'menu' || input.toLowerCase() === 'home') {
             await showMerchantDashboard(from, merchant);
@@ -51,7 +59,7 @@ export const handleMerchantAction = async (
         if (input === 'm_stats') {
             const stats = await getMerchantStats(merchant.id);
             let summary = `📊 *${merchant.trading_name} Stats*\n\n`;
-            summary += `💰 Total Sales: R${stats.salesTotal.toFixed(2)}\n`;
+            summary += `💰 Total Sales: ${formatCurrency(stats.salesTotal, { merchant, merchantBranding, platform: platformBranding })}\n`;
             summary += `🔔 Pending Orders: ${stats.pendingOrders}\n`;
             summary += `✅ Active Products: ${stats.activeProducts}\n`;
             summary += `🗄️ Archived Products: ${stats.archivedProducts}\n`;
@@ -59,7 +67,7 @@ export const handleMerchantAction = async (
             if (stats.recentOrders.length > 0) {
                 summary += `\n🧾 Recent Orders:\n`;
                 stats.recentOrders.forEach(order => {
-                    summary += `• #${order.id.slice(-5)} • R${order.total.toFixed(2)} • ${order.status}\n`;
+                    summary += `• #${order.id.slice(-5)} • ${formatCurrency(order.total, { merchant, merchantBranding, platform: platformBranding })} • ${order.status}\n`;
                 });
             } else {
                 summary += `\n🧾 Recent Orders:\n• None yet`;
@@ -90,7 +98,7 @@ export const handleMerchantAction = async (
             order.order_items.forEach(item => {
                 summary += `• ${item.quantity}x ${item.product?.name || 'Item'}\n`;
             });
-            summary += `\n💰 Total: R${order.total.toFixed(2)}`;
+            summary += `\n💰 Total: ${formatCurrency(order.total, { merchant, merchantBranding, platform: platformBranding })}`;
 
             await sendButtons(from, summary, [
                 { id: `ready_${order.id}`, title: '✅ Mark Ready' },
@@ -115,7 +123,17 @@ export const handleMerchantAction = async (
             return;
         }
 
+        if (matchesPrefix(input, BROADCAST_PREFIXES)) {
+            await handleBroadcastActions(from, input, session, merchant);
+            return;
+        }
+
         // Check for active flow state
+        if (session.active_prod_id === 'BROADCAST_MESSAGE') {
+            await handleBroadcastActions(from, input, session, merchant);
+            return;
+        }
+
         if (session.active_prod_id) {
             await handleInventoryActions(from, input, session, merchant, message);
             return;

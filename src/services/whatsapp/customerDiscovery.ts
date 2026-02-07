@@ -1,5 +1,8 @@
 import { PrismaClient } from '@prisma/client';
-import { sendTextMessage, sendListMessage } from './sender';
+import { sendTextMessage, sendListMessage, sendImageMessage } from './sender';
+import { formatCurrency, buildMerchantWelcome } from './messageTemplates';
+import { getPlatformBranding } from './platformBranding';
+import { setCustomerLastMerchant, upsertMerchantCustomer } from './merchantCustomers';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
@@ -8,6 +11,7 @@ if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db;
 const MAX_LIST_ROWS = 10;
 
 export const handleCustomerDiscovery = async (from: string, input: string): Promise<void> => {
+    const platformBranding = await getPlatformBranding(db);
     if (input.startsWith('cat_')) {
         const [, merchantId, categoryId] = input.split('_');
         if (!merchantId) {
@@ -21,6 +25,10 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
             return;
         }
 
+        await upsertMerchantCustomer(merchant.id, from);
+        await setCustomerLastMerchant(from, merchant.id);
+
+        const merchantBranding = await db.merchantBranding.findUnique({ where: { merchant_id: merchant.id } });
         const filter = categoryId && categoryId !== 'all' ? { category_id: categoryId } : {};
         const products = await db.product.findMany({
             where: {
@@ -46,7 +54,7 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
             return {
                 id: `prod_${product.id}`,
                 title: product.name.substring(0, 24),
-                description: `From R${displayPrice.toFixed(2)}${variantNote}`
+                description: `From ${formatCurrency(displayPrice, { merchant, merchantBranding, platform: platformBranding })}${variantNote}`
             };
         });
 
@@ -71,15 +79,22 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
             return;
         }
 
+        await upsertMerchantCustomer(product.merchant.id, from);
+        await setCustomerLastMerchant(from, product.merchant.id);
+        const merchantBranding = await db.merchantBranding.findUnique({ where: { merchant_id: product.merchant.id } });
+
         if (product.variants.length === 0) {
-            await sendTextMessage(from, `📦 *${product.name}*\n💰 R${product.price.toFixed(2)}\n\nNo variants available.`);
+            await sendTextMessage(
+                from,
+                `📦 *${product.name}*\n💰 ${formatCurrency(product.price, { merchant: product.merchant, merchantBranding, platform: platformBranding })}\n\nNo variants available.`
+            );
             return;
         }
 
         const rows = product.variants.map(variant => ({
             id: `variant_${variant.id}`,
             title: `${variant.size || 'Standard'}${variant.color ? ` • ${variant.color}` : ''}`.substring(0, 24),
-            description: `R${variant.price.toFixed(2)}${variant.sku ? ` • ${variant.sku}` : ''}`
+            description: `${formatCurrency(variant.price, { merchant: product.merchant, merchantBranding, platform: platformBranding })}${variant.sku ? ` • ${variant.sku}` : ''}`
         }));
 
         await sendListMessage(
@@ -103,12 +118,16 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
             return;
         }
 
+        await upsertMerchantCustomer(variant.product.merchant.id, from);
+        await setCustomerLastMerchant(from, variant.product.merchant.id);
+        const merchantBranding = await db.merchantBranding.findUnique({ where: { merchant_id: variant.product.merchant.id } });
+
         const details = [
             `📦 ${variant.product.name}`,
             `📐 Size: ${variant.size || 'Standard'}`,
             `🎨 Color: ${variant.color || 'None'}`,
             `🏷️ SKU: ${variant.sku || 'None'}`,
-            `💰 R${variant.price.toFixed(2)}`
+            `💰 ${formatCurrency(variant.price, { merchant: variant.product.merchant, merchantBranding, platform: platformBranding })}`
         ].join('\n');
 
         await sendTextMessage(from, `🛍️ *Variant Details*\n\n${details}`);
@@ -138,13 +157,23 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
             return;
         }
 
+        await upsertMerchantCustomer(merchant.id, from);
+        await setCustomerLastMerchant(from, merchant.id);
+
+        const merchantBranding = await db.merchantBranding.findUnique({ where: { merchant_id: merchant.id } });
+
         const categories = await db.category.findMany({
             where: { merchant_id: merchant.id },
             orderBy: { name: 'asc' },
             take: MAX_LIST_ROWS - 1
         });
 
-        const welcomeMsg = `👋 Welcome to *${merchant.trading_name}*!\n\n${merchant.description || 'Browse our menu below.'}`;
+        const welcomeMsg = buildMerchantWelcome(merchant, platformBranding);
+
+        const logoUrl = merchantBranding?.logo_url || merchant.image_url;
+        if (logoUrl) {
+            await sendImageMessage(from, logoUrl, `${merchant.trading_name} logo`);
+        }
 
         if (categories.length > 0) {
             const rows = categories.map(cat => ({
@@ -185,7 +214,7 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
                     return {
                         id: `prod_${p.id}`,
                         title: p.name.substring(0, 24),
-                        description: `From R${displayPrice.toFixed(2)}${variantNote}`
+                        description: `From ${formatCurrency(displayPrice, { merchant, merchantBranding, platform: platformBranding })}${variantNote}`
                     };
                 })
             }];
