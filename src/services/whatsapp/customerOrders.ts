@@ -51,6 +51,8 @@ export const handleCustomerOrders = async (from: string, input: string): Promise
             return;
         }
 
+        await upsertMerchantCustomer(order.merchant_id, from);
+
         let msg = `📋 *Order #${order.id.slice(-5)}*\n`;
         msg += `━━━━━━━━━━━━━━━\n`;
         msg += `🏪 ${order.merchant?.trading_name || 'Shop'}\n`;
@@ -71,6 +73,14 @@ export const handleCustomerOrders = async (from: string, input: string): Promise
     }
 
     await sendTextMessage(from, '⚠️ Unknown action.');
+};
+
+const upsertMerchantCustomer = async (merchantId: string, waId: string): Promise<void> => {
+    await db.merchantCustomer.upsert({
+        where: { merchant_id_wa_id: { merchant_id: merchantId, wa_id: waId } },
+        create: { merchant_id: merchantId, wa_id: waId, last_interaction_at: new Date() },
+        update: { last_interaction_at: new Date() }
+    });
 };
 
 const getStatusEmoji = (status: string): string => {

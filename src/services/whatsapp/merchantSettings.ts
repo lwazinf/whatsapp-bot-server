@@ -36,7 +36,10 @@ export const handleSettingsActions = async (
                     { id: 's_toggle', title: merchant.manual_closed ? '🔓 Open Shop' : '🔒 Close Shop' }
                 ]
             );
-            await sendButtons(from, 'Nav:', [{ id: 'm_dashboard', title: '🏠 Dashboard' }]);
+            await sendButtons(from, 'More:', [
+                { id: 'm_broadcast', title: '📣 Broadcast' },
+                { id: 'm_dashboard', title: '🏠 Dashboard' }
+            ]);
             return;
         }
 

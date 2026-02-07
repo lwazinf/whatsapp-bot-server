@@ -1,6 +1,7 @@
 import { PrismaClient, Merchant, UserSession } from '@prisma/client';
 import { handleInventoryActions } from './merchantInventory';
 import { handleKitchenActions } from './merchantKitchen';
+import { handleBroadcastActions } from './merchantBroadcast';
 import { handleSettingsActions } from './merchantSettings';
 import { showMerchantDashboard } from './merchantDashboard';
 import { sendButtons, sendTextMessage } from './sender';
@@ -12,6 +13,7 @@ if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db;
 const INVENTORY_PREFIXES = ['m_inventory', 'p_', 'm_add_', 'conf_', 'toggle_', 'delete_prod_', 'edit_prod_', 'skip_image', 'cancel_delete', 'confirm_del_'];
 const KITCHEN_PREFIXES = ['m_kitchen', 'k_', 'ready_', 'collected_', 'view_kitchen_'];
 const SETTINGS_PREFIXES = ['m_settings', 's_', 'h_', 'm_edit_hours', 'ob_hours'];
+const BROADCAST_PREFIXES = ['m_broadcast', 'b_'];
 
 export const handleMerchantAction = async (
     from: string, 
@@ -69,8 +71,17 @@ export const handleMerchantAction = async (
             return;
         }
 
+        if (matchesPrefix(input, BROADCAST_PREFIXES)) {
+            await handleBroadcastActions(from, input, session, merchant);
+            return;
+        }
+
         // Check for active flow state
         if (session.active_prod_id) {
+            if (session.active_prod_id.startsWith('BROADCAST_')) {
+                await handleBroadcastActions(from, input, session, merchant);
+                return;
+            }
             await handleInventoryActions(from, input, session, merchant, message);
             return;
         }

@@ -31,6 +31,8 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
             return;
         }
 
+        await upsertMerchantCustomer(merchant.id, from);
+
         const products = await db.product.findMany({ 
             where: { 
                 merchant_id: merchant.id, 
@@ -82,4 +84,12 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
     }
 
     await sendTextMessage(from, '🔍 To find a shop, type *@shophandle*');
+};
+
+const upsertMerchantCustomer = async (merchantId: string, waId: string): Promise<void> => {
+    await db.merchantCustomer.upsert({
+        where: { merchant_id_wa_id: { merchant_id: merchantId, wa_id: waId } },
+        create: { merchant_id: merchantId, wa_id: waId, last_interaction_at: new Date() },
+        update: { last_interaction_at: new Date() }
+    });
 };
