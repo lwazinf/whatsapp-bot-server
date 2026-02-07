@@ -5,6 +5,30 @@ const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db;
 
+const logAudit = async ({
+    actorWaId,
+    action,
+    entityType,
+    entityId,
+    metadata
+}: {
+    actorWaId: string;
+    action: string;
+    entityType: string;
+    entityId?: string;
+    metadata?: Record<string, unknown> | null;
+}): Promise<void> => {
+    await db.auditLog.create({
+        data: {
+            actor_wa_id: actorWaId,
+            action,
+            entity_type: entityType,
+            entity_id: entityId,
+            metadata_json: metadata ?? undefined
+        }
+    });
+};
+
 const STATE = {
     NAME: 'ADD_NAME',
     PRICE: 'ADD_PRICE_',
@@ -81,6 +105,13 @@ export const handleInventoryActions = async (
             if (!p || p.merchant_id !== merchant.id) { await sendTextMessage(from, '❌ Not found.'); return; }
             
             const updated = await db.product.update({ where: { id: pid }, data: { is_in_stock: !p.is_in_stock } });
+            await logAudit({
+                actorWaId: from,
+                action: 'PRODUCT_UPDATED',
+                entityType: 'PRODUCT',
+                entityId: updated.id,
+                metadata: { is_in_stock: updated.is_in_stock }
+            });
             await sendTextMessage(from, `✅ *${updated.name}* is now ${updated.is_in_stock ? '🟢 In Stock' : '🔴 Out of Stock'}`);
             await handleInventoryActions(from, 'p_view_all', session, merchant);
             return;
@@ -105,6 +136,13 @@ export const handleInventoryActions = async (
             const p = await db.product.findUnique({ where: { id: pid } });
             if (p && p.merchant_id === merchant.id) {
                 await db.product.delete({ where: { id: pid } });
+                await logAudit({
+                    actorWaId: from,
+                    action: 'PRODUCT_DELETED',
+                    entityType: 'PRODUCT',
+                    entityId: pid,
+                    metadata: { name: p.name }
+                });
                 await sendTextMessage(from, `🗑️ *${p.name}* deleted.`);
             }
             await clearState(from);
@@ -200,7 +238,14 @@ export const handleInventoryActions = async (
         // Finalize
         if (input.startsWith('conf_live_')) {
             const pid = input.replace('conf_live_', '');
-            await db.product.update({ where: { id: pid }, data: { is_in_stock: true, status: 'ACTIVE' } });
+            const updated = await db.product.update({ where: { id: pid }, data: { is_in_stock: true, status: 'ACTIVE' } });
+            await logAudit({
+                actorWaId: from,
+                action: 'PRODUCT_CREATED',
+                entityType: 'PRODUCT',
+                entityId: updated.id,
+                metadata: { name: updated.name, price: updated.price, image_url: updated.image_url }
+            });
             await clearState(from);
             await sendTextMessage(from, '🎉 Product is now live!');
             await handleInventoryActions(from, 'm_inventory', session, merchant);
