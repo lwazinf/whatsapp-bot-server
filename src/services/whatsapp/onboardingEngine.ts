@@ -1,5 +1,7 @@
 import { PrismaClient, MerchantStatus, Merchant, UserSession } from '@prisma/client';
 import { sendTextMessage, sendButtons } from './sender';
+import { PLATFORM_FEE_PERCENTAGE, PLATFORM_NAME, PLATFORM_PAYOUT_DAY } from './config';
+import { normalizeWaId } from './waId';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
@@ -56,7 +58,7 @@ const getStep = (m: Merchant | null): number => {
 const handleTradingName = async (from: string, input: string): Promise<void> => {
     if (!input || input.toLowerCase() === 'hi' || input.toLowerCase() === 'hello' || input.toLowerCase() === 'sell') {
         await sendTextMessage(from, 
-            '🏪 *Welcome to Omeru!*\n\n' +
+            `🏪 *Welcome to ${PLATFORM_NAME}!*\n\n` +
             "Let's set up your shop.\n\n" +
             '📝 *Step 1/6: Shop Name*\n' +
             'What is your trading name?'
@@ -205,8 +207,8 @@ const handleHours = async (from: string, input: string, session: UserSession, me
 const showTerms = async (from: string): Promise<void> => {
     await sendButtons(from, 
         '📜 *Step 6/6: Terms*\n\n' +
-        '• Platform Fee: 7%\n' +
-        '• Payouts: Every Friday\n' +
+        `• Platform Fee: ${PLATFORM_FEE_PERCENTAGE}%\n` +
+        `• Payouts: Every ${PLATFORM_PAYOUT_DAY}\n` +
         '• Keep store open during hours\n\n' +
         'Accept terms?',
         [
@@ -221,6 +223,10 @@ const handleTerms = async (from: string, input: string, merchant: Merchant): Pro
         await db.merchant.update({ 
             where: { wa_id: from }, 
             data: { accepted_terms: true, status: MerchantStatus.ACTIVE } 
+        });
+        await db.merchantInvite.updateMany({
+            where: { wa_id: normalizeWaId(from) },
+            data: { status: 'CLAIMED', claimed_at: new Date() }
         });
         await db.userSession.update({ where: { wa_id: from }, data: { mode: 'MERCHANT', active_prod_id: null } });
 

@@ -22,6 +22,12 @@ enum MerchantStatus {
   SUSPENDED
 }
 
+enum InviteStatus {
+  PENDING
+  CLAIMED
+  REVOKED
+}
+
 model UserSession {
   id             String   @id @default(cuid())
   wa_id          String   @unique
@@ -57,6 +63,17 @@ model Merchant {
   orders            Order[]
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
+}
+
+model MerchantInvite {
+  id        String       @id @default(cuid())
+  wa_id     String       @unique
+  label     String?
+  status    InviteStatus @default(PENDING)
+  added_by  String?
+  claimed_at DateTime?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
 }
 
 model Product {

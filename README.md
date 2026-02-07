@@ -67,6 +67,7 @@ See `.env.example` for all required variables.
 - `DATABASE_URL` - Neon PostgreSQL connection
 - `WHATSAPP_API_KEY` - 360Dialog API key
 - `R2_ACCESS_KEY_ID` - Cloudflare R2 credentials
+- `PLATFORM_ADMIN_NUMBERS` - Comma-separated admin WhatsApp numbers for owner invites
 
 ## 🧪 Testing
 
@@ -89,3 +90,11 @@ Issues? Check Railway logs:
 ## 📄 License
 
 MIT
+
+## 👤 Owner Invites
+
+Only admins can add store owners. Use WhatsApp commands from an admin number:
+
+1. Send `admin` to open the admin menu.
+2. Choose **Add Owner** and send `+27XXXXXXXXX, Store Name`.
+3. The owner receives an invite and can reply `sell` to start onboarding.
