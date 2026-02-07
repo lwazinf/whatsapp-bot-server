@@ -70,7 +70,7 @@ export const handleSettingsActions = async (
         // Logo
         if (input === 's_logo') {
             await setState(from, STATE.LOGO);
-            await sendButtons(from, '📸 Send an image for your logo.', [
+            await sendButtons(from, '📸 Send an image or paste a logo URL.', [
                 { id: 's_clear_logo', title: '🗑️ Remove Logo' },
                 { id: 's_cancel', title: '❌ Cancel' }
             ]);
@@ -79,14 +79,21 @@ export const handleSettingsActions = async (
 
         if (state === STATE.LOGO) {
             if (message?.type === 'image' && message?.image?.id) {
-                await db.merchant.update({ where: { id: merchant.id }, data: { image_url: message.image.id } });
+                await db.merchant.update({ where: { id: merchant.id }, data: { logo_image_url: message.image.id } });
+                await clearState(from);
+                await sendTextMessage(from, '✅ Logo updated!');
+                await handleSettingsActions(from, 's_profile', session, merchant);
+                return;
+            }
+            if (input.startsWith('http://') || input.startsWith('https://')) {
+                await db.merchant.update({ where: { id: merchant.id }, data: { logo_image_url: input.trim() } });
                 await clearState(from);
                 await sendTextMessage(from, '✅ Logo updated!');
                 await handleSettingsActions(from, 's_profile', session, merchant);
                 return;
             }
             if (input === 's_clear_logo') {
-                await db.merchant.update({ where: { id: merchant.id }, data: { image_url: null } });
+                await db.merchant.update({ where: { id: merchant.id }, data: { logo_image_url: null } });
                 await clearState(from);
                 await sendTextMessage(from, '✅ Logo removed.');
                 await handleSettingsActions(from, 's_profile', session, merchant);
@@ -97,7 +104,7 @@ export const handleSettingsActions = async (
                 await handleSettingsActions(from, 's_profile', session, merchant);
                 return;
             }
-            await sendButtons(from, '⚠️ Send an image.', [{ id: 's_cancel', title: '❌ Cancel' }]);
+            await sendButtons(from, '⚠️ Send an image or paste a URL.', [{ id: 's_cancel', title: '❌ Cancel' }]);
             return;
         }
 

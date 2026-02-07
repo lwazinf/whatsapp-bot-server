@@ -42,6 +42,7 @@ model Merchant {
   description       String?
   address           String?
   image_url         String?
+  logo_image_url    String?
   bank_name         String?
   bank_acc_no       String?
   bank_type         String?

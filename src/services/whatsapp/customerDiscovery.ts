@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { sendTextMessage, sendListMessage } from './sender';
+import { sendTextMessage, sendListMessage, sendImageMessage } from './sender';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
@@ -51,6 +51,9 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
                 }))
             }];
 
+            if (merchant.logo_image_url) {
+                await sendImageMessage(from, merchant.logo_image_url);
+            }
             const welcomeMsg = `👋 Welcome to *${merchant.trading_name}*!\n\n${merchant.description || 'Browse our menu below.'}`;
             await sendListMessage(from, welcomeMsg, '📖 View Menu', sections);
         } else {
