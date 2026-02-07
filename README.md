@@ -67,6 +67,8 @@ See `.env.example` for all required variables.
 - `DATABASE_URL` - Neon PostgreSQL connection
 - `WHATSAPP_API_KEY` - 360Dialog API key
 - `R2_ACCESS_KEY_ID` - Cloudflare R2 credentials
+- `ADMIN_WHATSAPP_NUMBER` - platform admin number for alerts/invites
+- `PLATFORM_ADMIN_NUMBERS` - comma-separated WhatsApp numbers allowed to manage store invites
 
 ## 🧪 Testing
 
@@ -80,6 +82,14 @@ Send a WhatsApp message to your platform number to test!
 ## 💰 Pricing Model
 
 5% transaction fee (tiered: 5% → 4% → 3%)
+
+## 🛡️ Platform Admin Invites
+
+Platform admins can create stores and send owner invites via WhatsApp:
+
+1. Message the bot `admin` from a number in `PLATFORM_ADMIN_NUMBERS`.
+2. Choose **Invite Store**, enter store name (optionally `Name | handle`), and the owner's WhatsApp number.
+3. The owner accepts the invite and uses `@{store}_admin` to start onboarding.
 
 ## 🆘 Support
 

@@ -22,14 +22,27 @@ enum MerchantStatus {
   SUSPENDED
 }
 
+enum MerchantOwnerRole {
+  OWNER
+  ADMIN
+  STAFF
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+}
+
 model UserSession {
-  id             String   @id @default(cuid())
-  wa_id          String   @unique
-  mode           String   @default("CUSTOMER")
-  state          String?
-  active_prod_id String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id               String   @id @default(cuid())
+  wa_id            String   @unique
+  mode             String   @default("CUSTOMER")
+  state            String?
+  active_prod_id   String?
+  last_merchant_id String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }
 
 model Merchant {
@@ -45,6 +58,7 @@ model Merchant {
   image_url         String?
   brand_name        String?
   currency          String?
+  locale            String?
   support_number    String?
   welcome_message   String?
   bank_name         String?
@@ -61,8 +75,83 @@ model Merchant {
   categories        Category[]
   products          Product[]
   orders            Order[]
+  owners            MerchantOwner[]
+  invites           MerchantInvite[]
+  customers         MerchantCustomer[]
+  branding          MerchantBranding?
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
+}
+
+model MerchantOwner {
+  id         String            @id @default(cuid())
+  merchant_id String
+  merchant   Merchant          @relation(fields: [merchant_id], references: [id])
+  wa_id      String
+  role       MerchantOwnerRole @default(OWNER)
+  is_active  Boolean           @default(true)
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  @@unique([merchant_id, wa_id])
+}
+
+model MerchantInvite {
+  id              String            @id @default(cuid())
+  merchant_id     String
+  merchant        Merchant          @relation(fields: [merchant_id], references: [id])
+  invited_wa_id   String
+  invited_by_wa_id String
+  role            MerchantOwnerRole @default(ADMIN)
+  status          InviteStatus      @default(PENDING)
+  accepted_at     DateTime?
+  revoked_at      DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([merchant_id, invited_wa_id])
+}
+
+model MerchantCustomer {
+  id                  String   @id @default(cuid())
+  merchant_id         String
+  merchant            Merchant @relation(fields: [merchant_id], references: [id])
+  wa_id               String
+  display_name        String?
+  last_interaction_at DateTime @default(now())
+  opt_out             Boolean  @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([merchant_id, wa_id])
+}
+
+model MerchantBranding {
+  id             String   @id @default(cuid())
+  merchant_id    String   @unique
+  merchant       Merchant @relation(fields: [merchant_id], references: [id])
+  locale         String?
+  currency       String?
+  logo_url       String?
+  primary_color  String?
+  message_footer String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model PlatformBranding {
+  id               String   @id @default(cuid())
+  name             String   @default("Omeru")
+  logo_url         String?
+  support_number   String?
+  default_locale   String?
+  default_currency String?
+  message_footer   String?
+  switch_code      String?
+  platform_fee     Float?
+  payout_day       String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }
 
 model Category {

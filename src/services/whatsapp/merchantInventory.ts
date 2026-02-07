@@ -1,5 +1,7 @@
 import { PrismaClient, Merchant, UserSession } from '@prisma/client';
 import { sendTextMessage, sendButtons, sendListMessage } from './sender';
+import { formatCurrency } from './messageTemplates';
+import { getPlatformBranding } from './platformBranding';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
@@ -57,6 +59,8 @@ export const handleInventoryActions = async (
     message?: any
 ): Promise<void> => {
     try {
+        const platformBranding = await getPlatformBranding(db);
+        const merchantBranding = await db.merchantBranding.findUnique({ where: { merchant_id: merchant.id } });
         const state = session.active_prod_id || '';
         const stateParts = parseState(state);
         const stateKey = stateParts[0];
@@ -64,11 +68,17 @@ export const handleInventoryActions = async (
         // Menu
         if (input === 'm_inventory' || input === 'p_back') {
             await clearState(from);
-            const count = await db.product.count({ where: { merchant_id: merchant.id, status: 'ACTIVE' } });
+            const [count, archivedCount] = await Promise.all([
+                db.product.count({ where: { merchant_id: merchant.id, status: 'ACTIVE' } }),
+                db.product.count({ where: { merchant_id: merchant.id, status: 'ARCHIVED' } })
+            ]);
             await sendButtons(from, `📦 *Menu Manager*\n\n${count} active items`, [
                 { id: 'm_add_prod', title: '➕ Add Item' },
                 { id: 'm_categories', title: '📂 Categories' },
-                { id: 'p_view_all', title: '👀 View Menu' },
+                { id: 'p_view_all', title: '👀 View Menu' }
+            ]);
+            await sendButtons(from, 'More:', [
+                { id: 'm_archived', title: `🗄️ Archived (${archivedCount})` },
                 { id: 'm_dashboard', title: '🏠 Dashboard' }
             ]);
             return;
@@ -129,7 +139,7 @@ export const handleInventoryActions = async (
             const rows = products.map(p => ({
                 id: `edit_prod_${p.id}`,
                 title: p.name.substring(0, 24),
-                description: `R${p.price.toFixed(2)} • ${p.is_in_stock ? '🟢' : '🔴'}`
+                description: `${formatCurrency(p.price, { merchant, merchantBranding, platform: platformBranding })} • ${p.is_in_stock ? '🟢' : '🔴'}`
             }));
 
             await sendListMessage(from, `📦 *Your Menu* (${products.length} items)`, '📋 View Items', [{ title: 'Products', rows }]);
@@ -143,7 +153,7 @@ export const handleInventoryActions = async (
             const p = await db.product.findUnique({ where: { id: pid }, include: { category: true } });
             if (!p) { await sendTextMessage(from, '❌ Product not found.'); return; }
 
-            await sendButtons(from, `📦 *${p.name}*\n\nR${p.price.toFixed(2)}\n${p.category ? `📂 ${p.category.name}\n` : ''}${p.is_in_stock ? '🟢 In Stock' : '🔴 Out of Stock'}`, [
+            await sendButtons(from, `📦 *${p.name}*\n\n${formatCurrency(p.price, { merchant, merchantBranding, platform: platformBranding })}\n${p.category ? `📂 ${p.category.name}\n` : ''}${p.is_in_stock ? '🟢 In Stock' : '🔴 Out of Stock'}`, [
                 { id: `toggle_${p.id}`, title: p.is_in_stock ? '🔴 Out of Stock' : '🟢 In Stock' },
                 { id: `delete_prod_${p.id}`, title: '🗑️ Delete' }
             ]);
@@ -182,7 +192,7 @@ export const handleInventoryActions = async (
             const rows = variants.map(v => ({
                 id: `edit_variant_${v.id}`,
                 title: `${v.size || 'Standard'}${v.color ? ` • ${v.color}` : ''}`.substring(0, 24),
-                description: `R${v.price.toFixed(2)}${v.sku ? ` • ${v.sku}` : ''}`
+                description: `${formatCurrency(v.price, { merchant, merchantBranding, platform: platformBranding })}${v.sku ? ` • ${v.sku}` : ''}`
             }));
 
             await sendListMessage(from, `🎨 *${product.name} Variants* (${variants.length})`, '📋 View Variants', [
@@ -211,7 +221,7 @@ export const handleInventoryActions = async (
                 `📐 Size: ${variant.size || 'Standard'}`,
                 `🎨 Color: ${variant.color || 'None'}`,
                 `🏷️ SKU: ${variant.sku || 'None'}`,
-                `💰 R${variant.price.toFixed(2)}`
+                `💰 ${formatCurrency(variant.price, { merchant, merchantBranding, platform: platformBranding })}`
             ].join('\n');
 
             await sendButtons(from, `🎨 *Variant Details*\n\n${details}`, [
@@ -331,15 +341,15 @@ export const handleInventoryActions = async (
             const pid = input.replace('confirm_del_', '');
             const p = await db.product.findUnique({ where: { id: pid } });
             if (p && p.merchant_id === merchant.id) {
-                await db.product.delete({ where: { id: pid } });
+                await db.product.update({ where: { id: pid }, data: { status: 'ARCHIVED', is_in_stock: false } });
                 await logAudit({
                     actorWaId: from,
-                    action: 'PRODUCT_DELETED',
+                    action: 'PRODUCT_ARCHIVED',
                     entityType: 'PRODUCT',
                     entityId: pid,
                     metadata: { name: p.name }
                 });
-                await sendTextMessage(from, `🗑️ *${p.name}* deleted.`);
+                await sendTextMessage(from, `🗄️ *${p.name}* archived.`);
             }
             await clearState(from);
             await handleInventoryActions(from, 'p_view_all', session, merchant);
@@ -541,7 +551,7 @@ export const handleInventoryActions = async (
 
             await db.product.update({ where: { id: pid }, data: { price } });
             await setState(from, buildState(STATE.IMAGE, pid));
-            await sendButtons(from, `💰 R${price.toFixed(2)}\n\n*Step 4/4:* Send a photo of the item.`, [
+            await sendButtons(from, `💰 ${formatCurrency(price, { merchant, merchantBranding, platform: platformBranding })}\n\n*Step 4/4:* Send a photo of the item.`, [
                 { id: 'skip_image', title: '⏭️ Skip' }
             ]);
             return;
@@ -569,12 +579,84 @@ export const handleInventoryActions = async (
             await setState(from, buildState(STATE.PREVIEW, pid));
 
             await sendButtons(from, 
-                `🔍 *Review*\n\n📦 ${product.name}\n💰 R${product.price.toFixed(2)}\n${product.category ? `📂 ${product.category.name}\n` : ''}${imageUrl ? '📸 Image added' : '📷 No image'}\n\nPublish?`,
+                `🔍 *Review*\n\n📦 ${product.name}\n💰 ${formatCurrency(product.price, { merchant, merchantBranding, platform: platformBranding })}\n${product.category ? `📂 ${product.category.name}\n` : ''}${imageUrl ? '📸 Image added' : '📷 No image'}\n\nPublish?`,
                 [
                     { id: `conf_live_${pid}`, title: '🚀 Make Live' },
                     { id: `delete_prod_${pid}`, title: '❌ Cancel' }
                 ]
             );
+            return;
+        }
+
+        if (input === 'm_archived') {
+            const archived = await db.product.findMany({
+                where: { merchant_id: merchant.id, status: 'ARCHIVED' },
+                orderBy: { updatedAt: 'desc' },
+                take: 10
+            });
+
+            if (archived.length === 0) {
+                await sendTextMessage(from, '🗄️ No archived items.');
+                await handleInventoryActions(from, 'm_inventory', session, merchant);
+                return;
+            }
+
+            const rows = archived.map(p => ({
+                id: `arch_prod_${p.id}`,
+                title: p.name.substring(0, 24),
+                description: formatCurrency(p.price, { merchant, merchantBranding, platform: platformBranding })
+            }));
+
+            await sendListMessage(from, `🗄️ *Archived Items* (${archived.length})`, '📋 View', [
+                { title: 'Archived', rows }
+            ]);
+            await sendButtons(from, 'Actions:', [{ id: 'm_inventory', title: '⬅️ Back' }]);
+            return;
+        }
+
+        if (input.startsWith('arch_prod_')) {
+            const pid = input.replace('arch_prod_', '');
+            const product = await db.product.findUnique({ where: { id: pid }, include: { category: true } });
+            if (!product || product.merchant_id !== merchant.id) {
+                await sendTextMessage(from, '❌ Item not found.');
+                return;
+            }
+
+            await sendButtons(
+                from,
+                `🗄️ *${product.name}*\n\n${formatCurrency(product.price, { merchant, merchantBranding, platform: platformBranding })}\n${product.category ? `📂 ${product.category.name}` : ''}`,
+                [
+                    { id: `arch_restore_${product.id}`, title: '♻️ Restore' },
+                    { id: `arch_delete_${product.id}`, title: '🗑️ Delete' }
+                ]
+            );
+            await sendButtons(from, 'Nav:', [{ id: 'm_archived', title: '⬅️ Back' }]);
+            return;
+        }
+
+        if (input.startsWith('arch_restore_')) {
+            const pid = input.replace('arch_restore_', '');
+            const product = await db.product.findUnique({ where: { id: pid } });
+            if (!product || product.merchant_id !== merchant.id) {
+                await sendTextMessage(from, '❌ Item not found.');
+                return;
+            }
+            await db.product.update({ where: { id: pid }, data: { status: 'ACTIVE', is_in_stock: true } });
+            await sendTextMessage(from, `♻️ *${product.name}* restored.`);
+            await handleInventoryActions(from, 'm_archived', session, merchant);
+            return;
+        }
+
+        if (input.startsWith('arch_delete_')) {
+            const pid = input.replace('arch_delete_', '');
+            const product = await db.product.findUnique({ where: { id: pid } });
+            if (!product || product.merchant_id !== merchant.id) {
+                await sendTextMessage(from, '❌ Item not found.');
+                return;
+            }
+            await db.product.delete({ where: { id: pid } });
+            await sendTextMessage(from, `🗑️ *${product.name}* deleted.`);
+            await handleInventoryActions(from, 'm_archived', session, merchant);
             return;
         }
 

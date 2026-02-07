@@ -1,5 +1,6 @@
-import { PrismaClient, Merchant, UserSession } from '@prisma/client';
+import { PrismaClient, Merchant, MerchantOwnerRole, UserSession } from '@prisma/client';
 import { sendTextMessage, sendButtons } from './sender';
+import { logInviteAdded, logInviteRevoked } from './adminEngine';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const db = globalForPrisma.prisma || new PrismaClient();
@@ -37,8 +38,11 @@ const STATE = {
     HOURS_SAT: 'SET_HRS_SAT',
     BRAND_NAME: 'SET_BRAND_NAME',
     CURRENCY: 'SET_CURRENCY',
+    LOCALE: 'SET_LOCALE',
     SUPPORT_NUMBER: 'SET_SUPPORT_NUMBER',
-    WELCOME_MESSAGE: 'SET_WELCOME_MESSAGE'
+    WELCOME_MESSAGE: 'SET_WELCOME_MESSAGE',
+    OWNER_INVITE: 'SET_OWNER_INVITE',
+    OWNER_REMOVE: 'SET_OWNER_REMOVE'
 };
 
 export const handleSettingsActions = async (
@@ -50,6 +54,10 @@ export const handleSettingsActions = async (
 ): Promise<void> => {
     try {
         const state = session.active_prod_id || '';
+        const owner = await db.merchantOwner.findUnique({
+            where: { merchant_id_wa_id: { merchant_id: merchant.id, wa_id: from } }
+        });
+        const ownerRole = owner?.role || (merchant.wa_id === from ? MerchantOwnerRole.OWNER : MerchantOwnerRole.STAFF);
 
         // Main Settings Menu
         if (input === 'm_settings' || input === 's_back') {
@@ -73,11 +81,17 @@ export const handleSettingsActions = async (
             await sendButtons(from, '👤 *Edit Profile*', [
                 { id: 's_bio', title: '📝 Description' },
                 { id: 's_logo', title: '📸 Logo' },
-                { id: 's_addr', title: '📍 Address' },
+                { id: 's_addr', title: '📍 Address' }
+            ]);
+            await sendButtons(from, 'More:', [
                 { id: 's_brand_name', title: '🏷️ Brand Name' },
                 { id: 's_currency', title: '💱 Currency' },
+                { id: 's_locale', title: '🌍 Locale' }
+            ]);
+            await sendButtons(from, 'More:', [
                 { id: 's_support_number', title: '☎️ Support Number' },
-                { id: 's_welcome_message', title: '👋 Welcome Message' }
+                { id: 's_welcome_message', title: '👋 Welcome Message' },
+                { id: 's_owners', title: '👥 Owners' }
             ]);
             await sendButtons(from, 'Nav:', [{ id: 's_back', title: '⬅️ Back' }]);
             return;
@@ -119,6 +133,7 @@ export const handleSettingsActions = async (
         if (state === STATE.LOGO) {
             if (message?.type === 'image' && message?.image?.id) {
                 await db.merchant.update({ where: { id: merchant.id }, data: { image_url: message.image.id } });
+                await upsertBranding(merchant.id, { logo_url: message.image.id });
                 await logAudit({
                     actorWaId: from,
                     action: 'MERCHANT_LOGO_UPDATED',
@@ -133,6 +148,7 @@ export const handleSettingsActions = async (
             }
             if (input === 's_clear_logo') {
                 await db.merchant.update({ where: { id: merchant.id }, data: { image_url: null } });
+                await upsertBranding(merchant.id, { logo_url: null });
                 await logAudit({
                     actorWaId: from,
                     action: 'MERCHANT_LOGO_REMOVED',
@@ -214,6 +230,7 @@ export const handleSettingsActions = async (
         if (state === STATE.CURRENCY) {
             if (input.toLowerCase() === 'clear') {
                 await db.merchant.update({ where: { id: merchant.id }, data: { currency: null } });
+                await upsertBranding(merchant.id, { currency: null });
                 await clearState(from);
                 await sendTextMessage(from, '✅ Currency cleared.');
                 await handleSettingsActions(from, 's_profile', session, merchant);
@@ -227,8 +244,43 @@ export const handleSettingsActions = async (
             }
 
             await db.merchant.update({ where: { id: merchant.id }, data: { currency } });
+            await upsertBranding(merchant.id, { currency });
             await clearState(from);
             await sendTextMessage(from, '✅ Currency updated!');
+            await handleSettingsActions(from, 's_profile', session, merchant);
+            return;
+        }
+
+        // Locale
+        if (input === 's_locale') {
+            await setState(from, STATE.LOCALE);
+            await sendTextMessage(
+                from,
+                `🌍 *Locale*\n\nCurrent: ${merchant.locale || '_Not set_'}\n\nEnter a locale like en-ZA or en-US, or "clear":`
+            );
+            return;
+        }
+
+        if (state === STATE.LOCALE) {
+            if (input.toLowerCase() === 'clear') {
+                await db.merchant.update({ where: { id: merchant.id }, data: { locale: null } });
+                await upsertBranding(merchant.id, { locale: null });
+                await clearState(from);
+                await sendTextMessage(from, '✅ Locale cleared.');
+                await handleSettingsActions(from, 's_profile', session, merchant);
+                return;
+            }
+
+            const locale = input.trim();
+            if (!isValidLocale(locale)) {
+                await sendTextMessage(from, '⚠️ Enter a valid locale like en-ZA or en-US.');
+                return;
+            }
+
+            await db.merchant.update({ where: { id: merchant.id }, data: { locale } });
+            await upsertBranding(merchant.id, { locale });
+            await clearState(from);
+            await sendTextMessage(from, '✅ Locale updated!');
             await handleSettingsActions(from, 's_profile', session, merchant);
             return;
         }
@@ -281,6 +333,132 @@ export const handleSettingsActions = async (
             await clearState(from);
             await sendTextMessage(from, welcomeMessage ? '✅ Welcome message updated!' : '✅ Welcome message cleared.');
             await handleSettingsActions(from, 's_profile', session, merchant);
+            return;
+        }
+
+        // Owners & invites
+        if (input === 's_owners') {
+            if (ownerRole === MerchantOwnerRole.STAFF) {
+                await sendTextMessage(from, '⛔ You do not have permission to manage owners.');
+                return;
+            }
+
+            const [owners, invites] = await Promise.all([
+                db.merchantOwner.findMany({
+                    where: { merchant_id: merchant.id, is_active: true },
+                    orderBy: { createdAt: 'asc' }
+                }),
+                db.merchantInvite.findMany({
+                    where: { merchant_id: merchant.id, status: 'PENDING' },
+                    orderBy: { createdAt: 'desc' }
+                })
+            ]);
+
+            let msg = '👥 *Owners*\n\n';
+            owners.forEach((entry, index) => {
+                msg += `${index + 1}. ${entry.wa_id} • ${entry.role}\n`;
+            });
+
+            if (invites.length > 0) {
+                msg += '\nPending Invites:\n';
+                invites.forEach(invite => {
+                    msg += `• ${invite.invited_wa_id} • ${invite.role}\n`;
+                });
+            }
+
+            await sendButtons(from, msg, [
+                { id: 's_owner_invite', title: '➕ Invite' },
+                { id: 's_owner_remove', title: '🗑️ Remove' },
+                { id: 's_profile', title: '⬅️ Back' }
+            ]);
+            return;
+        }
+
+        if (input === 's_owner_invite') {
+            if (ownerRole === MerchantOwnerRole.STAFF) {
+                await sendTextMessage(from, '⛔ You do not have permission to invite owners.');
+                return;
+            }
+            await setState(from, STATE.OWNER_INVITE);
+            await sendTextMessage(
+                from,
+                '👥 Enter the WhatsApp number to invite (E.164 format, e.g. +15551234567).'
+            );
+            return;
+        }
+
+        if (state === STATE.OWNER_INVITE) {
+            const invitee = input.trim();
+            if (!isValidPhoneNumber(invitee)) {
+                await sendTextMessage(from, '⚠️ Enter a valid phone number in E.164 format.');
+                return;
+            }
+
+            const invite = await db.merchantInvite.upsert({
+                where: { merchant_id_invited_wa_id: { merchant_id: merchant.id, invited_wa_id: invitee } },
+                update: { status: 'PENDING', role: MerchantOwnerRole.ADMIN, invited_by_wa_id: from },
+                create: {
+                    merchant_id: merchant.id,
+                    invited_wa_id: invitee,
+                    invited_by_wa_id: from,
+                    role: MerchantOwnerRole.ADMIN
+                }
+            });
+
+            await logInviteAdded(from, invitee, { merchant_id: merchant.id, invite_id: invite.id });
+
+            await sendButtons(
+                invitee,
+                `👋 You have been invited to manage *${merchant.trading_name}*.\n\nAccept this invite?`,
+                [
+                    { id: `accept_invite_${invite.id}`, title: '✅ Accept' },
+                    { id: `decline_invite_${invite.id}`, title: '❌ Decline' }
+                ]
+            );
+
+            await clearState(from);
+            await sendTextMessage(from, `✅ Invite sent to ${invitee}.`);
+            await handleSettingsActions(from, 's_owners', session, merchant);
+            return;
+        }
+
+        if (input === 's_owner_remove') {
+            if (ownerRole !== MerchantOwnerRole.OWNER) {
+                await sendTextMessage(from, '⛔ Only owners can remove other owners.');
+                return;
+            }
+            await setState(from, STATE.OWNER_REMOVE);
+            await sendTextMessage(from, '🗑️ Enter the WhatsApp number to remove from owners.');
+            return;
+        }
+
+        if (state === STATE.OWNER_REMOVE) {
+            const removeId = input.trim();
+            if (!isValidPhoneNumber(removeId)) {
+                await sendTextMessage(from, '⚠️ Enter a valid phone number in E.164 format.');
+                return;
+            }
+            if (removeId === from) {
+                await sendTextMessage(from, '⚠️ You cannot remove yourself.');
+                return;
+            }
+
+            const ownerRecord = await db.merchantOwner.findUnique({
+                where: { merchant_id_wa_id: { merchant_id: merchant.id, wa_id: removeId } }
+            });
+            if (!ownerRecord || !ownerRecord.is_active) {
+                await sendTextMessage(from, '⚠️ Owner not found.');
+                return;
+            }
+
+            await db.merchantOwner.update({
+                where: { merchant_id_wa_id: { merchant_id: merchant.id, wa_id: removeId } },
+                data: { is_active: false }
+            });
+            await logInviteRevoked(from, removeId, { merchant_id: merchant.id });
+            await clearState(from);
+            await sendTextMessage(from, `🗑️ ${removeId} removed from owners.`);
+            await handleSettingsActions(from, 's_owners', session, merchant);
             return;
         }
 
@@ -397,3 +575,16 @@ const formatHours = (open: string | null, close: string | null): string => {
 const isValidCurrencyCode = (value: string): boolean => /^[A-Z]{3}$/.test(value);
 
 const isValidPhoneNumber = (value: string): boolean => /^\+[1-9]\d{7,14}$/.test(value);
+
+const isValidLocale = (value: string): boolean => /^[a-z]{2}(-[A-Z]{2})?$/.test(value);
+
+const upsertBranding = async (
+    merchantId: string,
+    data: { logo_url?: string | null; currency?: string | null; locale?: string | null }
+): Promise<void> => {
+    await db.merchantBranding.upsert({
+        where: { merchant_id: merchantId },
+        update: data,
+        create: { merchant_id: merchantId, ...data }
+    });
+};
