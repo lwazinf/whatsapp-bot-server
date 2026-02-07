@@ -36,6 +36,7 @@ model Merchant {
   id                String         @id @default(cuid())
   wa_id             String         @unique
   handle            String         @unique
+  admin_handle      String?        @unique
   trading_name      String
   legal_entity_name String?
   id_number         String?

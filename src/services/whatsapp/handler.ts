@@ -37,7 +37,7 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
             update: {},
             create: { wa_id: from, mode: 'CUSTOMER' }
         });
-        
+
         const merchant = await db.merchant.findUnique({ where: { wa_id: from } });
 
         console.log(`📩 [${session.mode}] ${from}: "${input}"`);
@@ -50,6 +50,29 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
                 data: { mode: newMode }
             });
             await sendTextMessage(from, `🔄 Switched to *${newMode}* mode.`);
+            return;
+        }
+
+        const adminHandle = getAdminHandleInput(input);
+        if (adminHandle) {
+            const adminMerchant = await db.merchant.findFirst({ where: { admin_handle: adminHandle } });
+            if (!adminMerchant) {
+                await sendTextMessage(from, '❌ Admin handle not found.');
+                return;
+            }
+            if (adminMerchant.wa_id !== from) {
+                await sendTextMessage(from, '⛔ You are not authorized to access this merchant.');
+                return;
+            }
+
+            if (adminMerchant.status !== MerchantStatus.ACTIVE) {
+                await db.userSession.update({ where: { wa_id: from }, data: { mode: 'REGISTERING' } });
+                await handleOnboardingAction(from, input, session, adminMerchant, message);
+                return;
+            }
+
+            await db.userSession.update({ where: { wa_id: from }, data: { mode: 'MERCHANT' } });
+            await handleMerchantAction(from, input, session, adminMerchant, message);
             return;
         }
 
@@ -105,4 +128,12 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
         console.error('❌ Handler Error:', err.message);
         await sendTextMessage(from, '⚠️ Something went wrong. Please try again.');
     }
+};
+
+const getAdminHandleInput = (input: string): string | null => {
+    if (!input.startsWith('@')) return null;
+    const firstToken = input.split(/\s+/)[0];
+    const handle = firstToken.slice(1).toLowerCase().replace(/[^a-z0-9_]/g, '');
+    if (!handle.endsWith('_admin')) return null;
+    return handle || null;
 };

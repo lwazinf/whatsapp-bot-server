@@ -64,21 +64,25 @@ const handleTradingName = async (from: string, input: string): Promise<void> => 
         return;
     }
 
-    if (input.length < 3 || input.length > 50) {
+    const { tradingName, customAdminHandle } = parseTradingNameInput(input);
+
+    if (tradingName.length < 3 || tradingName.length > 50) {
         await sendTextMessage(from, '⚠️ Name must be 3-50 characters.');
         return;
     }
 
-    const handle = await generateHandle(input);
+    const handle = await generateHandle(tradingName);
+    const adminHandle = await generateAdminHandle(handle, customAdminHandle, from);
     
     await db.merchant.upsert({
         where: { wa_id: from },
-        update: { trading_name: input.trim(), handle },
-        create: { wa_id: from, trading_name: input.trim(), handle, status: MerchantStatus.ONBOARDING }
+        update: { trading_name: tradingName.trim(), handle, admin_handle: adminHandle },
+        create: { wa_id: from, trading_name: tradingName.trim(), handle, admin_handle: adminHandle, status: MerchantStatus.ONBOARDING }
     });
 
     await sendTextMessage(from, 
-        `✅ *${input}* (@${handle})\n\n` +
+        `✅ *${tradingName}* (@${handle})\n` +
+        `🔐 Admin: @${adminHandle}\n\n` +
         '📝 *Step 2/6: Owner Details*\n' +
         'Full legal name of owner/company?'
     );
@@ -250,4 +254,26 @@ const generateHandle = async (name: string): Promise<string> => {
         handle = `${base}${i++}`;
     }
     return handle;
+};
+
+const parseTradingNameInput = (input: string): { tradingName: string; customAdminHandle?: string } => {
+    const [namePart, adminPart] = input.split('|').map(part => part.trim()).filter(Boolean);
+    return { tradingName: namePart || input.trim(), customAdminHandle: adminPart };
+};
+
+const generateAdminHandle = async (handle: string, customAdminHandle: string | undefined, waId: string): Promise<string> => {
+    const normalizedCustom = customAdminHandle
+        ? customAdminHandle.toLowerCase().replace(/[^a-z0-9_]/g, '')
+        : '';
+    let base = normalizedCustom || `${handle}_admin`;
+    if (!base.endsWith('_admin')) {
+        base = `${base}_admin`;
+    }
+
+    let adminHandle = base;
+    let i = 1;
+    while (await db.merchant.findFirst({ where: { admin_handle: adminHandle, NOT: { wa_id: waId } } })) {
+        adminHandle = `${base}${i++}`;
+    }
+    return adminHandle;
 };
