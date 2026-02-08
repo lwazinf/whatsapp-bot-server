@@ -4,14 +4,14 @@
   "description": "WhatsApp-only multi-business ordering platform",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:push": "prisma db push",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "dev": "tsx watch src/index.ts",
+    "build": "npx prisma generate && tsc", 
+    "start": "node dist/index.js",
+    "postinstall": "prisma generate"
   },
   "keywords": [
     "whatsapp",
