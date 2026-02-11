@@ -1,25 +1,21 @@
 import express, { Request, Response } from 'express';
-// These imports assume your files are in src/services/whatsapp/ as discussed
+// Ensure this path matches your file structure
 import { handleIncomingMessage } from './services/whatsapp/handler'; 
 
 const app = express();
-// Railway provides the PORT environment variable
 const PORT = process.env.PORT || 8080;
 
-// Increase limit to handle image uploads/media metadata if needed
 app.use(express.json({ limit: '1mb' }));
 
 /**
- * 1. Railway Health Check
- * Critical for the Railway proxy to mark the service as "Active"
+ * Health Check for Railway
  */
 app.get('/health', (req: Request, res: Response) => {
     res.status(200).send('OK');
 });
 
 /**
- * 2. WhatsApp Webhook Verification (GET)
- * Used by 360Dialog/Meta to verify the server ownership
+ * Webhook Verification
  */
 app.get('/api/whatsapp/webhook', (req: Request, res: Response) => {
     const challenge = req.query['hub.challenge'];
@@ -35,36 +31,43 @@ app.get('/api/whatsapp/webhook', (req: Request, res: Response) => {
 });
 
 /**
- * 3. Main Webhook Handler (POST)
- * Processes incoming WhatsApp messages
+ * Main Webhook Handler
  */
 app.post('/api/whatsapp/webhook', async (req: Request, res: Response) => {
-    // Return 200 immediately. WhatsApp/360Dialog requires a response within 
-    // a few seconds to avoid retries and 502/504 timeouts.
+    // 1. Respond 200 OK immediately to prevent retries
     res.status(200).send('OK');
 
     try {
-        const message = req.body.messages?.[0];
+        // 2. Navigate the nested Meta/360Dialog structure
+        // Entry[0] -> Changes[0] -> Value -> Messages[0]
+        const message = 
+            req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0] || 
+            req.body.messages?.[0];
+
         if (message) {
-            console.log(`📩 Received message from ${message.from}`);
-            // Logic handled asynchronously after responding OK
+            console.log(`📩 Received ${message.type} from ${message.from}`);
             await handleIncomingMessage(message);
+        } else {
+            // Check if it's a status update (sent/delivered/read)
+            const status = 
+                req.body.entry?.[0]?.changes?.[0]?.value?.statuses?.[0] || 
+                req.body.statuses?.[0];
+            
+            if (status) {
+                console.log(`ℹ️ Message Status Update: ${status.status} for ${status.id}`);
+            } else {
+                console.log('❓ Unknown payload format received. Check Railway logs for body content.');
+            }
         }
     } catch (err: any) {
-        // Log errors so they appear in Railway 'Deploy Logs'
-        console.error('❌ Webhook Logic Error:', err.message);
+        console.error('❌ Webhook Processing Error:', err.message);
+        // Do not crash the server on logic errors
     }
 });
 
-/**
- * 4. Server Binding
- * Must listen on 0.0.0.0 to be reachable via Railway's Edge Proxy.
- */
 app.listen(Number(PORT), '0.0.0.0', () => {
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log(`🚀 OMERU SERVER LIVE`);
-    console.log(`📡 Binding: 0.0.0.0:${PORT}`);
-    console.log(`🔗 Health: /health`);
-    console.log(`🔗 Webhook: /api/whatsapp/webhook`);
+    console.log(`📡 Port: ${PORT}`);
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 });
