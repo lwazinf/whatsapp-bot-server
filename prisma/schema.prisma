@@ -1,0 +1,231 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  READY_FOR_PICKUP
+  COMPLETED
+  CANCELLED
+}
+
+enum MerchantStatus {
+  ONBOARDING
+  ACTIVE
+  SUSPENDED
+}
+
+enum MerchantOwnerRole {
+  OWNER
+  ADMIN
+  STAFF
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+}
+
+model UserSession {
+  id               String   @id @default(cuid())
+  wa_id            String   @unique
+  mode             String   @default("CUSTOMER")
+  state            String?
+  active_prod_id   String?
+  last_merchant_id String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model Merchant {
+  id                String         @id @default(cuid())
+  wa_id             String         @unique
+  handle            String         @unique
+  admin_handle      String?        @unique
+  trading_name      String
+  legal_entity_name String?
+  id_number         String?
+  description       String?
+  address           String?
+  image_url         String?
+  brand_name        String?
+  currency          String?
+  locale            String?
+  support_number    String?
+  welcome_message   String?
+  bank_name         String?
+  bank_acc_no       String?
+  bank_type         String?
+  open_time         String         @default("08:00")
+  close_time        String         @default("18:00")
+  sat_open_time     String         @default("10:00")
+  sat_close_time    String         @default("15:00")
+  sun_open          Boolean        @default(false)
+  manual_closed     Boolean        @default(false)
+  accepted_terms    Boolean        @default(false)
+  status            MerchantStatus @default(ACTIVE)
+  categories        Category[]
+  products          Product[]
+  orders            Order[]
+  owners            MerchantOwner[]
+  invites           MerchantInvite[]
+  customers         MerchantCustomer[]
+  branding          MerchantBranding?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+}
+
+model MerchantOwner {
+  id         String            @id @default(cuid())
+  merchant_id String
+  merchant   Merchant          @relation(fields: [merchant_id], references: [id])
+  wa_id      String
+  role       MerchantOwnerRole @default(OWNER)
+  is_active  Boolean           @default(true)
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  @@unique([merchant_id, wa_id])
+}
+
+model MerchantInvite {
+  id              String            @id @default(cuid())
+  merchant_id     String
+  merchant        Merchant          @relation(fields: [merchant_id], references: [id])
+  invited_wa_id   String
+  invited_by_wa_id String
+  role            MerchantOwnerRole @default(ADMIN)
+  status          InviteStatus      @default(PENDING)
+  accepted_at     DateTime?
+  revoked_at      DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([merchant_id, invited_wa_id])
+}
+
+model MerchantCustomer {
+  id                  String   @id @default(cuid())
+  merchant_id         String
+  merchant            Merchant @relation(fields: [merchant_id], references: [id])
+  wa_id               String
+  display_name        String?
+  last_interaction_at DateTime @default(now())
+  opt_out             Boolean  @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([merchant_id, wa_id])
+}
+
+model MerchantBranding {
+  id             String   @id @default(cuid())
+  merchant_id    String   @unique
+  merchant       Merchant @relation(fields: [merchant_id], references: [id])
+  locale         String?
+  currency       String?
+  logo_url       String?
+  primary_color  String?
+  message_footer String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model PlatformBranding {
+  id               String   @id @default(cuid())
+  name             String   @default("Omeru")
+  logo_url         String?
+  support_number   String?
+  default_locale   String?
+  default_currency String?
+  message_footer   String?
+  switch_code      String?
+  platform_fee     Float?
+  payout_day       String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model Category {
+  id          String    @id @default(cuid())
+  merchant_id String
+  merchant    Merchant  @relation(fields: [merchant_id], references: [id])
+  name        String
+  description String?
+  products    Product[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Product {
+  id          String      @id @default(cuid())
+  merchant_id String
+  merchant    Merchant    @relation(fields: [merchant_id], references: [id])
+  category_id String?
+  category    Category?   @relation(fields: [category_id], references: [id])
+  name        String
+  description String?
+  price       Float
+  image_url   String?
+  is_in_stock Boolean     @default(true)
+  status      String      @default("ACTIVE")
+  order_items OrderItem[]
+  variants    ProductVariant[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+}
+
+model ProductVariant {
+  id          String   @id @default(cuid())
+  product_id  String
+  product     Product  @relation(fields: [product_id], references: [id])
+  size        String?
+  color       String?
+  sku         String?
+  price       Float
+  is_in_stock Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Order {
+  id            String      @id @default(cuid())
+  customer_id   String
+  merchant_id   String
+  merchant      Merchant    @relation(fields: [merchant_id], references: [id])
+  total         Float
+  items_summary String?
+  status        OrderStatus @default(PENDING)
+  alert_count   Int         @default(0)
+  order_items   OrderItem[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+model OrderItem {
+  id         String  @id @default(cuid())
+  order_id   String
+  order      Order   @relation(fields: [order_id], references: [id])
+  product_id String
+  product    Product @relation(fields: [product_id], references: [id])
+  quantity   Int
+  price      Float
+}
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  actor_wa_id   String
+  action        String
+  entity_type   String
+  entity_id     String?
+  metadata_json Json?
+  createdAt     DateTime @default(now())
+}

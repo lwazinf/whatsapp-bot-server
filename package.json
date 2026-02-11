@@ -1,0 +1,51 @@
+{
+  "name": "whatsapp-multi-business-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp-only multi-business ordering platform",
+  "main": "dist/index.js",
+  "scripts": {
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:push": "prisma db push",
+    "prisma:studio": "prisma studio",
+    "dev": "tsx watch src/index.ts",
+    "build": "npx prisma generate && tsc",
+    "start": "node dist/index.js",
+    "postinstall": "prisma generate"
+  },
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "multi-business",
+    "ordering"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.450.0",
+    "@prisma/client": "^6.19.2",
+    "@types/node-cron": "^3.0.11",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "ioredis": "^5.3.2",
+    "nanoid": "^3.3.7",
+    "node-cron": "^4.2.1",
+    "node-fetch": "^2.7.0",
+    "qrcode": "^1.5.3",
+    "sharp": "^0.33.0"
+  },
+  "devDependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.19.30",
+    "@types/node-fetch": "^2.6.11",
+    "@types/qrcode": "^1.5.5",
+    "prisma": "^6.19.2",
+    "tsx": "^4.6.2",
+    "typescript": "^5.3.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
