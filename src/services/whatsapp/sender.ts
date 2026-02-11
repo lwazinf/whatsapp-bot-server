@@ -1,7 +1,7 @@
 import axios, { AxiosError } from 'axios';
 
 // 360Dialog On-Premise API Configuration
-const API_URL = process.env.WHATSAPP_API_URL || 'https://waba-v2.360dialog.io/v1';
+const API_URL = process.env.WHATSAPP_API_URL || 'https://waba-v2.360dialog.io';
 const API_KEY = process.env.WHATSAPP_API_KEY || '';
 
 // Validate on startup
