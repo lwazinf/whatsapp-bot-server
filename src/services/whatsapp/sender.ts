@@ -1,27 +1,17 @@
 import axios, { AxiosError } from 'axios';
 
 // ============ CONFIGURATION ============
-const API_URL = process.env.WHATSAPP_API_URL || 'https://waba-v2.360dialog.io';
-const API_KEY = process.env.WHATSAPP_API_KEY;
-
-// Log warning if API key is missing on startup
-if (!API_KEY) {
-    console.error('⚠️ CRITICAL: WHATSAPP_API_KEY environment variable is not set!');
-}
+// Read dynamically per request so key changes and cold-start timing are never an issue
+const getConfig = () => {
+    const apiUrl = process.env.WHATSAPP_API_URL || 'https://waba-v2.360dialog.io';
+    const apiKey = process.env.WHATSAPP_API_KEY || '';
+    if (!apiKey) console.error('⚠️ CRITICAL: WHATSAPP_API_KEY is not set!');
+    return { apiUrl, apiKey };
+};
 
 // Rate limiting settings
-const MESSAGE_DELAY_MS = 150; 
+const MESSAGE_DELAY_MS = 150;
 let lastMessageTime = 0;
-
-// Axios instance for 360Dialog
-const api = axios.create({
-    baseURL: API_URL,
-    headers: {
-        'Content-Type': 'application/json',
-        'D360-API-KEY': API_KEY || ''
-    },
-    timeout: 30000
-});
 
 // ============ CORE SEND FUNCTION ============
 
@@ -38,7 +28,10 @@ const sendMessage = async (payload: any): Promise<boolean> => {
         }
         lastMessageTime = Date.now();
 
-        const response = await api.post('/messages', payload);
+        const { apiUrl, apiKey } = getConfig();
+        const response = await axios.post(`${apiUrl}/messages`, payload, {
+            headers: { 'D360-API-KEY': apiKey, 'Content-Type': 'application/json' }
+        });
         
         if (response.status === 200 || response.status === 201) {
             return true;
@@ -163,9 +156,12 @@ export const sendImageMessage = async (to: string, imageUrl: string, caption?: s
  */
 export const markAsRead = async (messageId: string): Promise<boolean> => {
     try {
-        const response = await api.post('/messages', {
+        const { apiUrl, apiKey } = getConfig();
+        const response = await axios.post(`${apiUrl}/messages`, {
             status: 'read',
             message_id: messageId
+        }, {
+            headers: { 'D360-API-KEY': apiKey, 'Content-Type': 'application/json' }
         });
         return response.status === 200;
     } catch (err) {
