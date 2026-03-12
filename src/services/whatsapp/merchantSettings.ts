@@ -30,6 +30,7 @@ const logAudit = async ({
 const STATE = {
     BIO: 'SET_BIO',
     LOGO: 'SET_LOGO',
+    WELCOME_IMG: 'SET_WELCOME_IMG',
     ADDRESS: 'SET_ADDR',
     HOURS_MF: 'SET_HRS_MF',
     HOURS_SAT: 'SET_HRS_SAT',
@@ -60,16 +61,20 @@ export const handleSettingsActions = async (
         if (input === 'm_settings' || input === 's_back') {
             await clearState(from);
             const status = merchant.manual_closed ? '🔴 CLOSED' : '🟢 OPEN';
-            
-            await sendButtons(from, 
-                `🛠️ *Settings*\n\n🏪 ${merchant.trading_name}\n${status}\n\n📝 ${merchant.description || '_No bio_'}\n📍 ${merchant.address || '_No address_'}`,
+            const browseStatus = (merchant as any).show_in_browse ? '👁️ Visible in Browse' : '🙈 Hidden from Browse';
+
+            await sendButtons(from,
+                `🛠️ *Settings*\n\n🏪 ${merchant.trading_name}\n${status} • ${browseStatus}\n\n📝 ${merchant.description || '_No bio_'}\n📍 ${merchant.address || '_No address_'}`,
                 [
                     { id: 's_profile', title: '👤 Edit Profile' },
                     { id: 's_hours', title: '⏰ Hours' },
                     { id: 's_toggle', title: merchant.manual_closed ? '🔓 Open Shop' : '🔒 Close Shop' }
                 ]
             );
-            await sendButtons(from, 'Nav:', [{ id: 'm_dashboard', title: '🏠 Dashboard' }]);
+            await sendButtons(from, 'More:', [
+                { id: 's_browse_toggle', title: (merchant as any).show_in_browse ? '🙈 Hide from Browse' : '👁️ Show in Browse' },
+                { id: 'm_dashboard', title: '🏠 Dashboard' }
+            ]);
             return;
         }
 
@@ -88,9 +93,12 @@ export const handleSettingsActions = async (
             await sendButtons(from, 'More:', [
                 { id: 's_support_number', title: '☎️ Support Number' },
                 { id: 's_welcome_message', title: '👋 Welcome Message' },
-                { id: 's_owners', title: '👥 Owners' }
+                { id: 's_welcome_img', title: '🖼️ Welcome Image' }
             ]);
-            await sendButtons(from, 'Nav:', [{ id: 's_back', title: '⬅️ Back' }]);
+            await sendButtons(from, 'More:', [
+                { id: 's_owners', title: '👥 Owners' },
+                { id: 's_back', title: '⬅️ Back' }
+            ]);
             return;
         }
 
@@ -333,6 +341,56 @@ export const handleSettingsActions = async (
             return;
         }
 
+        // Browse toggle
+        if (input === 's_browse_toggle') {
+            const newVal = !(merchant as any).show_in_browse;
+            await db.merchant.update({ where: { id: merchant.id }, data: { show_in_browse: newVal } as any });
+            await sendTextMessage(from, newVal
+                ? '👁️ Your store is now *visible* in the Browse Shops list.'
+                : '🙈 Your store is now *hidden* from the Browse Shops list.');
+            const updated = await db.merchant.findUnique({ where: { id: merchant.id } });
+            await handleSettingsActions(from, 'm_settings', session, updated!);
+            return;
+        }
+
+        // Welcome Image
+        if (input === 's_welcome_img') {
+            await setState(from, STATE.WELCOME_IMG);
+            const currentImg = (merchant as any).welcome_image_url;
+            await sendButtons(from,
+                `🖼️ *Welcome Image*\n\nShown when customers visit your store via @handle.\n\nCurrent: ${currentImg ? '✅ Set' : '❌ Not set'}\n\nSend an image to update:`,
+                [
+                    { id: 's_clear_welcome_img', title: '🗑️ Remove Image' },
+                    { id: 's_cancel', title: '❌ Cancel' }
+                ]
+            );
+            return;
+        }
+
+        if (state === STATE.WELCOME_IMG) {
+            if (message?.type === 'image' && message?.image?.id) {
+                await db.merchant.update({ where: { id: merchant.id }, data: { welcome_image_url: message.image.id } as any });
+                await clearState(from);
+                await sendTextMessage(from, '✅ Welcome image updated!');
+                await handleSettingsActions(from, 's_profile', session, merchant);
+                return;
+            }
+            if (input === 's_clear_welcome_img') {
+                await db.merchant.update({ where: { id: merchant.id }, data: { welcome_image_url: null } as any });
+                await clearState(from);
+                await sendTextMessage(from, '✅ Welcome image removed.');
+                await handleSettingsActions(from, 's_profile', session, merchant);
+                return;
+            }
+            if (input === 's_cancel') {
+                await clearState(from);
+                await handleSettingsActions(from, 's_profile', session, merchant);
+                return;
+            }
+            await sendButtons(from, '⚠️ Send an image or cancel.', [{ id: 's_cancel', title: '❌ Cancel' }]);
+            return;
+        }
+
         // Owners & invites
         if (input === 's_owners') {
             if (ownerRole === MerchantOwnerRole.STAFF) {
@@ -352,13 +410,13 @@ export const handleSettingsActions = async (
             ]);
 
             let msg = '👥 *Owners*\n\n';
-            owners.forEach((entry, index) => {
+            owners.forEach((entry: any, index: number) => {
                 msg += `${index + 1}. ${entry.wa_id} • ${entry.role}\n`;
             });
 
             if (invites.length > 0) {
                 msg += '\nPending Invites:\n';
-                invites.forEach(invite => {
+                invites.forEach((invite: any) => {
                     msg += `• ${invite.invited_wa_id} • ${invite.role}\n`;
                 });
             }
@@ -391,30 +449,40 @@ export const handleSettingsActions = async (
                 return;
             }
 
+            const shortCode = Math.random().toString(36).substring(2, 8).toUpperCase();
             const invite = await db.merchantInvite.upsert({
                 where: { merchant_id_invited_wa_id: { merchant_id: merchant.id, invited_wa_id: invitee } },
-                update: { status: 'PENDING', role: MerchantOwnerRole.ADMIN, invited_by_wa_id: from },
+                update: { status: 'PENDING', role: MerchantOwnerRole.ADMIN, invited_by_wa_id: from, short_code: shortCode } as any,
                 create: {
                     merchant_id: merchant.id,
                     invited_wa_id: invitee,
                     invited_by_wa_id: from,
-                    role: MerchantOwnerRole.ADMIN
-                }
+                    role: MerchantOwnerRole.ADMIN,
+                    short_code: shortCode
+                } as any
             });
 
             await logInviteAdded(from, invitee, { merchant_id: merchant.id, invite_id: invite.id });
 
-            await sendButtons(
-                invitee,
-                `👋 You have been invited to manage *${merchant.trading_name}*.\n\nAccept this invite?`,
-                [
-                    { id: `accept_invite_${invite.id}`, title: '✅ Accept' },
-                    { id: `decline_invite_${invite.id}`, title: '❌ Decline' }
-                ]
-            );
+            try {
+                await sendButtons(
+                    invitee,
+                    `👋 You have been invited to manage *${merchant.trading_name}*.\n\nAccept this invite?`,
+                    [
+                        { id: `accept_invite_${invite.id}`, title: '✅ Accept' },
+                        { id: `decline_invite_${invite.id}`, title: '❌ Decline' }
+                    ]
+                );
+            } catch {
+                // Silently continue — fallback code shown below
+            }
 
             await clearState(from);
-            await sendTextMessage(from, `✅ Invite sent to ${invitee}.`);
+            await sendTextMessage(
+                from,
+                `✅ Invite sent to ${invitee}.\n\n` +
+                `If they don't receive it, share this:\n_"Message Omeru and type: *JOIN ${shortCode}*"_`
+            );
             await handleSettingsActions(from, 's_owners', session, merchant);
             return;
         }

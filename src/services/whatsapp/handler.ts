@@ -4,7 +4,8 @@ import { handleOnboardingAction } from './onboardingEngine';
 import { handleCustomerDiscovery } from './customerDiscovery';
 import { handleCustomerOrders } from './customerOrders';
 import { handlePlatformAdminActions } from './platformAdmin';
-import { sendTextMessage, sendButtons } from './sender';
+import { handleHelpCommand } from './helpEngine';
+import { sendTextMessage, sendButtons, sendListMessage } from './sender';
 import { getPlatformSettings } from './platformBranding';
 import { db } from '../../lib/db';
 
@@ -18,12 +19,12 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
     }
 
     const from = message.from;
-    
+
     // Extract user input from various possible WhatsApp interactive types
     const textBody = message.text?.body;
     const buttonId = message.interactive?.button_reply?.id;
     const listId = message.interactive?.list_reply?.id;
-    
+
     const input = String(buttonId || listId || textBody || '').trim();
 
     // Ignore empty messages unless they contain media/location for specific flows
@@ -43,12 +44,18 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
         });
 
         // 2. Identify User Role (Merchant or Owner)
-        const merchant = await db.merchant.findUnique({ where: { wa_id: from } });
-        const ownerRecord = await db.merchantOwner.findFirst({
-            where: { wa_id: from, is_active: true },
-            include: { merchant: true }
-        });
-        const merchantForUser = merchant || ownerRecord?.merchant || null;
+        let merchantForUser = null;
+        if (session.active_merchant_id) {
+            merchantForUser = await db.merchant.findUnique({ where: { id: session.active_merchant_id } });
+        }
+        if (!merchantForUser) {
+            const directMerchant = await db.merchant.findUnique({ where: { wa_id: from } });
+            const ownerRecord = await db.merchantOwner.findFirst({
+                where: { wa_id: from, is_active: true },
+                include: { merchant: true }
+            });
+            merchantForUser = directMerchant || ownerRecord?.merchant || null;
+        }
 
         console.log(`📩 [${session.mode}] ${from}: "${input}"`);
 
@@ -56,14 +63,41 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
 
         // 3. GLOBAL COMMANDS
 
-        // Switch Modes (Customer <-> Merchant)
+        // Help command
+        if (input === 'HelpOmeru' || normalizedInput === 'helpomeru') {
+            await handleHelpCommand(from);
+            return;
+        }
+
+        // SwitchOmeru / switch — show a list of available modes
         if (normalizedInput === 'switch' || input === platformSettings.switchCode) {
-            const newMode = session.mode === 'CUSTOMER' ? 'MERCHANT' : 'CUSTOMER';
-            await db.userSession.update({
-                where: { wa_id: from },
-                data: { mode: newMode }
-            });
-            await sendTextMessage(from, `🔄 Switched to *${newMode}* mode.`);
+            await handleSwitchMode(from, session);
+            return;
+        }
+
+        // Switch mode selections
+        if (input === 'sw_customer') {
+            await db.userSession.update({ where: { wa_id: from }, data: { mode: 'CUSTOMER', active_merchant_id: null } });
+            await sendTextMessage(from, '👤 Switched to *Customer* mode.');
+            return;
+        }
+
+        if (input === 'sw_admin') {
+            await db.userSession.update({ where: { wa_id: from }, data: { mode: 'CUSTOMER', active_merchant_id: null } });
+            await sendTextMessage(from, '🛡️ Switched to *Platform Admin* mode. Type *admin* to open the panel.');
+            return;
+        }
+
+        if (input.startsWith('sw_merchant_')) {
+            const merchantId = input.replace('sw_merchant_', '');
+            const targetMerchant = await db.merchant.findUnique({ where: { id: merchantId } });
+            const authorized = targetMerchant ? await isAuthorizedOwner(from, merchantId) : false;
+            if (!targetMerchant || !authorized) {
+                await sendTextMessage(from, '⛔ Store not found or access denied.');
+                return;
+            }
+            await db.userSession.update({ where: { wa_id: from }, data: { mode: 'MERCHANT', active_merchant_id: merchantId } });
+            await sendTextMessage(from, `🏪 Switched to *${targetMerchant.trading_name}*. Type *menu* for dashboard.`);
             return;
         }
 
@@ -73,9 +107,16 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
             return;
         }
 
-        // Handle Invites
+        // Handle Invites (button response)
         if (input.startsWith('accept_invite_') || input.startsWith('decline_invite_')) {
             await handleInviteResponse(from, input);
+            return;
+        }
+
+        // Handle invite short codes (e.g. "JOIN ABC123")
+        const joinMatch = input.match(/^JOIN\s+([A-Z0-9]{6})$/i);
+        if (joinMatch) {
+            await handleInviteByCode(from, joinMatch[1].toUpperCase());
             return;
         }
 
@@ -106,12 +147,12 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
                     await sendTextMessage(from, '⛔ Your account is not yet invited. Please contact the platform admin.');
                     return;
                 }
-                await db.userSession.update({ where: { wa_id: from }, data: { mode: 'REGISTERING' } });
+                await db.userSession.update({ where: { wa_id: from }, data: { mode: 'REGISTERING', active_merchant_id: adminMerchant.id } });
                 await handleOnboardingAction(from, input, session, adminMerchant, message);
                 return;
             }
 
-            await db.userSession.update({ where: { wa_id: from }, data: { mode: 'MERCHANT' } });
+            await db.userSession.update({ where: { wa_id: from }, data: { mode: 'MERCHANT', active_merchant_id: adminMerchant.id } });
             await handleMerchantAction(from, input, session, adminMerchant, message);
             return;
         }
@@ -132,14 +173,14 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
         // Merchant Mode
         if (session.mode === 'MERCHANT') {
             if (!merchantForUser) {
-                await db.userSession.update({ where: { wa_id: from }, data: { mode: 'CUSTOMER' } });
+                await db.userSession.update({ where: { wa_id: from }, data: { mode: 'CUSTOMER', active_merchant_id: null } });
                 await sendTextMessage(from, '⚠️ Merchant profile not found. Switched to Customer mode.');
                 return;
             }
             const authorized = await isAuthorizedOwner(from, merchantForUser.id);
             if (!authorized) {
                 await sendTextMessage(from, '⛔ You are not authorized to access this merchant.');
-                await db.userSession.update({ where: { wa_id: from }, data: { mode: 'CUSTOMER' } });
+                await db.userSession.update({ where: { wa_id: from }, data: { mode: 'CUSTOMER', active_merchant_id: null } });
                 return;
             }
             await handleMerchantAction(from, input, session, merchantForUser, message);
@@ -151,7 +192,7 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
             await handleCustomerDiscovery(from, input);
             return;
         }
-        
+
         if (input === 'c_my_orders' || input.startsWith('view_order_')) {
             await handleCustomerOrders(from, input);
             return;
@@ -168,7 +209,7 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
                 where: { wa_id: from },
                 data: { mode: 'REGISTERING' }
             });
-            await sendTextMessage(from, 
+            await sendTextMessage(from,
                 '🏪 *Start Selling on Omeru!*\n\n' +
                 "Let's set up your shop.\n\n" +
                 '📝 *Step 1 of 6: Shop Name*\n' +
@@ -185,8 +226,57 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
 
     } catch (err: any) {
         console.error('❌ Handler Error:', err.message);
-        // Avoid leaking technical errors to the user
         await sendTextMessage(from, '⚠️ Something went wrong on our end. Please try again in a moment.');
+    }
+};
+
+// ============ SWITCH MODE ============
+
+const handleSwitchMode = async (from: string, _session: any): Promise<void> => {
+    // Find all stores this user has access to
+    const directMerchant = await db.merchant.findUnique({ where: { wa_id: from } });
+    const ownerRecords = await db.merchantOwner.findMany({
+        where: { wa_id: from, is_active: true },
+        include: { merchant: true }
+    });
+
+    const stores: Array<{ id: string; name: string }> = [];
+    if (directMerchant && directMerchant.status === MerchantStatus.ACTIVE) {
+        stores.push({ id: directMerchant.id, name: directMerchant.trading_name });
+    }
+    for (const rec of ownerRecords) {
+        if (rec.merchant.status === MerchantStatus.ACTIVE && !stores.find(s => s.id === rec.merchant.id)) {
+            stores.push({ id: rec.merchant.id, name: rec.merchant.trading_name });
+        }
+    }
+
+    const isAdmin = isPlatformAdmin(from);
+    const totalOptions = 1 + (isAdmin ? 1 : 0) + stores.length;
+
+    if (totalOptions <= 3) {
+        // Use buttons for 2-3 options
+        const buttons: Array<{ id: string; title: string }> = [
+            { id: 'sw_customer', title: '👤 Customer Mode' }
+        ];
+        if (isAdmin) buttons.push({ id: 'sw_admin', title: '🛡️ Platform Admin' });
+        for (const store of stores.slice(0, 3 - buttons.length)) {
+            buttons.push({ id: `sw_merchant_${store.id}`, title: `🏪 ${store.name}`.substring(0, 20) });
+        }
+        await sendButtons(from, '🔄 *Switch Mode*\n\nChoose where to go:', buttons);
+    } else {
+        // Use list for 4+ options
+        const rows: Array<{ id: string; title: string; description: string }> = [
+            { id: 'sw_customer', title: '👤 Customer Mode', description: 'Browse shops & manage orders' }
+        ];
+        if (isAdmin) {
+            rows.push({ id: 'sw_admin', title: '🛡️ Platform Admin', description: 'Manage platform & merchants' });
+        }
+        for (const store of stores) {
+            rows.push({ id: `sw_merchant_${store.id}`, title: `🏪 ${store.name}`.substring(0, 24), description: 'Merchant dashboard' });
+        }
+        await sendListMessage(from, '🔄 *Switch Mode*\n\nChoose where to go:', '🔄 Select Mode', [
+            { title: 'Available Modes', rows }
+        ]);
     }
 };
 
@@ -215,19 +305,55 @@ const handleOptOut = async (waId: string, lastMerchantId?: string | null): Promi
     return true;
 };
 
+const normalizePhone = (p: string): string => p.replace(/[^\d]/g, '');
+
 const handleInviteResponse = async (waId: string, input: string): Promise<void> => {
     const [action, inviteId] = input.split('_invite_');
     if (!inviteId) {
         await sendTextMessage(waId, '⚠️ Invite ID missing.');
         return;
     }
-    const invite = await db.merchantInvite.findUnique({ where: { id: inviteId } });
-    if (!invite || invite.invited_wa_id !== waId || invite.status !== 'PENDING') {
+    const invite = await db.merchantInvite.findUnique({
+        where: { id: inviteId },
+        include: { merchant: true }
+    });
+    if (!invite || normalizePhone(invite.invited_wa_id) !== normalizePhone(waId) || invite.status !== 'PENDING') {
         await sendTextMessage(waId, '⚠️ This invite is no longer valid.');
         return;
     }
 
-    if (action === 'accept') {
+    await processInviteAccept(waId, invite, action === 'accept');
+};
+
+const handleInviteByCode = async (waId: string, code: string): Promise<void> => {
+    const invite = await db.merchantInvite.findFirst({
+        where: { short_code: code },
+        include: { merchant: true }
+    });
+    if (!invite || invite.status !== 'PENDING') {
+        await sendTextMessage(waId, '⚠️ Invite code not found or already used.');
+        return;
+    }
+    // Verify number if set (invited_wa_id may have been set with + prefix)
+    if (invite.invited_wa_id && normalizePhone(invite.invited_wa_id) !== normalizePhone(waId)) {
+        await sendTextMessage(waId, '⚠️ This invite code is for a different number.');
+        return;
+    }
+
+    // Show accept/decline prompt
+    const merchantName = (invite as any).merchant?.trading_name || 'this store';
+    await sendButtons(
+        waId,
+        `👋 You have been invited to manage *${merchantName}*.\n\nAccept this invite?`,
+        [
+            { id: `accept_invite_${invite.id}`, title: '✅ Accept' },
+            { id: `decline_invite_${invite.id}`, title: '❌ Decline' }
+        ]
+    );
+};
+
+const processInviteAccept = async (waId: string, invite: any, accept: boolean): Promise<void> => {
+    if (accept) {
         await db.merchantOwner.upsert({
             where: { merchant_id_wa_id: { merchant_id: invite.merchant_id, wa_id: waId } },
             update: { is_active: true, role: invite.role },
@@ -237,8 +363,13 @@ const handleInviteResponse = async (waId: string, input: string): Promise<void> 
             where: { id: invite.id },
             data: { status: 'ACCEPTED', accepted_at: new Date() }
         });
-        await db.userSession.update({ where: { wa_id: waId }, data: { mode: 'MERCHANT' } });
-        await sendTextMessage(waId, '✅ Invite accepted! You now have access to the merchant dashboard.');
+        await db.userSession.upsert({
+            where: { wa_id: waId },
+            update: { mode: 'MERCHANT', active_merchant_id: invite.merchant_id },
+            create: { wa_id: waId, mode: 'MERCHANT', active_merchant_id: invite.merchant_id }
+        });
+        const merchantName = invite.merchant?.trading_name || 'the store';
+        await sendTextMessage(waId, `✅ Invite accepted! You now have access to *${merchantName}*. Type *menu* to open the dashboard.`);
         return;
     }
 
@@ -265,16 +396,21 @@ const canAccessOnboarding = async (waId: string, merchantId?: string | null): Pr
     });
     if (owner?.is_active) return true;
     const invite = await db.merchantInvite.findFirst({
-        where: { merchant_id: merchantId, invited_wa_id: waId, status: 'ACCEPTED' }
+        where: { merchant_id: merchantId, status: 'ACCEPTED' }
     });
+    // Check if this waId is the invited one
+    const pendingInvite = await db.merchantInvite.findFirst({
+        where: { merchant_id: merchantId, status: 'PENDING' }
+    });
+    if (pendingInvite && normalizePhone(pendingInvite.invited_wa_id) === normalizePhone(waId)) return true;
     return Boolean(invite);
 };
 
 const hasPendingInvite = async (waId: string): Promise<boolean> => {
-    const invite = await db.merchantInvite.findFirst({
-        where: { invited_wa_id: waId, status: 'PENDING' }
+    const allPending = await db.merchantInvite.findMany({
+        where: { status: 'PENDING' }
     });
-    return Boolean(invite);
+    return allPending.some((inv: any) => normalizePhone(inv.invited_wa_id) === normalizePhone(waId));
 };
 
 const isPlatformAdmin = (waId: string): boolean => {
@@ -283,8 +419,6 @@ const isPlatformAdmin = (waId: string): boolean => {
         .split(',')
         .map(value => value.trim())
         .filter(Boolean)
-        .map(normalizeWaId);
-    return admins.includes(normalizeWaId(waId));
+        .map(normalizePhone);
+    return admins.includes(normalizePhone(waId));
 };
-
-const normalizeWaId = (value: string): string => value.replace(/[^\d]/g, '');

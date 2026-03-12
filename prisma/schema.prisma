@@ -35,14 +35,15 @@ enum InviteStatus {
 }
 
 model UserSession {
-  id               String   @id @default(cuid())
-  wa_id            String   @unique
-  mode             String   @default("CUSTOMER")
-  state            String?
-  active_prod_id   String?
-  last_merchant_id String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id                 String   @id @default(cuid())
+  wa_id              String   @unique
+  mode               String   @default("CUSTOMER")
+  state              String?
+  active_prod_id     String?
+  last_merchant_id   String?
+  active_merchant_id String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 }
 
 model Merchant {
@@ -71,6 +72,8 @@ model Merchant {
   sun_open          Boolean        @default(false)
   manual_closed     Boolean        @default(false)
   accepted_terms    Boolean        @default(false)
+  show_in_browse    Boolean        @default(true)
+  welcome_image_url String?
   status            MerchantStatus @default(ACTIVE)
   categories        Category[]
   products          Product[]
@@ -104,6 +107,7 @@ model MerchantInvite {
   invited_by_wa_id String
   role            MerchantOwnerRole @default(ADMIN)
   status          InviteStatus      @default(PENDING)
+  short_code      String?           @unique
   accepted_at     DateTime?
   revoked_at      DateTime?
   createdAt       DateTime          @default(now())

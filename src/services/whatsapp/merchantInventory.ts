@@ -42,7 +42,11 @@ const STATE = {
     VAR_SKU: 'VAR_SKU',
     VAR_PRICE: 'VAR_PRICE',
     EDIT_VARIANT: 'EDIT_VARIANT',
-    EDIT_CATEGORY: 'EDIT_CATEGORY'
+    EDIT_CATEGORY: 'EDIT_CATEGORY',
+    EDIT_PROD_DESC: 'EDIT_PROD_DESC',
+    EDIT_PROD_PRICE: 'EDIT_PROD_PRICE',
+    EDIT_PROD_NAME: 'EDIT_PROD_NAME',
+    EDIT_PROD_IMG: 'EDIT_PROD_IMG'
 };
 
 const buildState = (key: string, ...parts: string[]) => [key, ...parts].join('|');
@@ -150,16 +154,140 @@ export const handleInventoryActions = async (
             const p = await db.product.findUnique({ where: { id: pid }, include: { category: true } });
             if (!p) { await sendTextMessage(from, '❌ Product not found.'); return; }
 
-            await sendButtons(from, `📦 *${p.name}*\n\n${formatCurrency(p.price, { merchant, merchantBranding, platform: platformBranding })}\n${p.category ? `📂 ${p.category.name}\n` : ''}${p.is_in_stock ? '🟢 In Stock' : '🔴 Out of Stock'}`, [
+            const details = [
+                `📦 *${p.name}*`,
+                `💰 ${formatCurrency(p.price, { merchant, merchantBranding, platform: platformBranding })}`,
+                p.category ? `📂 ${p.category.name}` : '',
+                p.description ? `📝 ${p.description.substring(0, 60)}${p.description.length > 60 ? '…' : ''}` : '📝 No description',
+                p.image_url ? '📸 Image: ✅' : '📸 No image',
+                p.is_in_stock ? '🟢 In Stock' : '🔴 Out of Stock'
+            ].filter(Boolean).join('\n');
+
+            await sendButtons(from, details, [
                 { id: `toggle_${p.id}`, title: p.is_in_stock ? '🔴 Out of Stock' : '🟢 In Stock' },
-                { id: `delete_prod_${p.id}`, title: '🗑️ Delete' }
+                { id: `prod_edit_name_${p.id}`, title: '✏️ Name' },
+                { id: `prod_edit_price_${p.id}`, title: '💰 Price' }
             ]);
-            await sendButtons(from, 'More Actions:', [
-                { id: `edit_category_${p.id}`, title: '📂 Category' },
+            await sendButtons(from, 'Edit:', [
+                { id: `prod_edit_desc_${p.id}`, title: '📝 Description' },
+                { id: `prod_edit_img_${p.id}`, title: '📸 Image' },
+                { id: `edit_category_${p.id}`, title: '📂 Category' }
+            ]);
+            await sendButtons(from, 'More:', [
                 { id: `view_variants_${p.id}`, title: '🎨 Variants' },
-                { id: `add_variant_${p.id}`, title: '➕ Variant' }
+                { id: `add_variant_${p.id}`, title: '➕ Variant' },
+                { id: `delete_prod_${p.id}`, title: '🗑️ Archive' }
             ]);
             await sendButtons(from, 'Nav:', [{ id: 'p_view_all', title: '⬅️ Back' }]);
+            return;
+        }
+
+        // Edit product name
+        if (input.startsWith('prod_edit_name_')) {
+            const pid = input.replace('prod_edit_name_', '');
+            const p = await db.product.findUnique({ where: { id: pid } });
+            if (!p || p.merchant_id !== merchant.id) { await sendTextMessage(from, '❌ Not found.'); return; }
+            await setState(from, buildState(STATE.EDIT_PROD_NAME, pid));
+            await sendTextMessage(from, `✏️ *Edit Name*\n\nCurrent: ${p.name}\n\nEnter new name:`);
+            return;
+        }
+
+        if (stateKey === STATE.EDIT_PROD_NAME) {
+            const pid = stateParts[1];
+            if (input.length < 2 || input.length > 50) {
+                await sendTextMessage(from, '⚠️ Name must be 2-50 characters.');
+                return;
+            }
+            await db.product.update({ where: { id: pid }, data: { name: input.trim() } });
+            await logAudit({ actorWaId: from, action: 'PRODUCT_UPDATED', entityType: 'PRODUCT', entityId: pid, metadata: { name: input.trim() } });
+            await clearState(from);
+            await sendTextMessage(from, '✅ Name updated!');
+            await handleInventoryActions(from, `edit_prod_${pid}`, session, merchant);
+            return;
+        }
+
+        // Edit product price
+        if (input.startsWith('prod_edit_price_')) {
+            const pid = input.replace('prod_edit_price_', '');
+            const p = await db.product.findUnique({ where: { id: pid } });
+            if (!p || p.merchant_id !== merchant.id) { await sendTextMessage(from, '❌ Not found.'); return; }
+            await setState(from, buildState(STATE.EDIT_PROD_PRICE, pid));
+            await sendTextMessage(from, `💰 *Edit Price*\n\nCurrent: ${formatCurrency(p.price, { merchant, merchantBranding, platform: platformBranding })}\n\nEnter new price (e.g. 45.50):`);
+            return;
+        }
+
+        if (stateKey === STATE.EDIT_PROD_PRICE) {
+            const pid = stateParts[1];
+            const price = parseFloat(input.replace(',', '.').replace(/[^\d.]/g, ''));
+            if (isNaN(price) || price <= 0 || price > 99999) {
+                await sendTextMessage(from, '⚠️ Enter a valid price (e.g., 45.50)');
+                return;
+            }
+            await db.product.update({ where: { id: pid }, data: { price } });
+            await logAudit({ actorWaId: from, action: 'PRODUCT_UPDATED', entityType: 'PRODUCT', entityId: pid, metadata: { price } });
+            await clearState(from);
+            await sendTextMessage(from, '✅ Price updated!');
+            await handleInventoryActions(from, `edit_prod_${pid}`, session, merchant);
+            return;
+        }
+
+        // Edit product description
+        if (input.startsWith('prod_edit_desc_')) {
+            const pid = input.replace('prod_edit_desc_', '');
+            const p = await db.product.findUnique({ where: { id: pid } });
+            if (!p || p.merchant_id !== merchant.id) { await sendTextMessage(from, '❌ Not found.'); return; }
+            await setState(from, buildState(STATE.EDIT_PROD_DESC, pid));
+            await sendTextMessage(from, `📝 *Edit Description*\n\nCurrent: ${p.description || '_None_'}\n\nType new description or "clear" to remove:`);
+            return;
+        }
+
+        if (stateKey === STATE.EDIT_PROD_DESC) {
+            const pid = stateParts[1];
+            const description = input.toLowerCase() === 'clear' ? null : input.substring(0, 500);
+            await db.product.update({ where: { id: pid }, data: { description } });
+            await clearState(from);
+            await sendTextMessage(from, description ? '✅ Description updated!' : '✅ Description cleared.');
+            await handleInventoryActions(from, `edit_prod_${pid}`, session, merchant);
+            return;
+        }
+
+        // Edit product image
+        if (input.startsWith('prod_edit_img_')) {
+            const pid = input.replace('prod_edit_img_', '');
+            const p = await db.product.findUnique({ where: { id: pid } });
+            if (!p || p.merchant_id !== merchant.id) { await sendTextMessage(from, '❌ Not found.'); return; }
+            await setState(from, buildState(STATE.EDIT_PROD_IMG, pid));
+            await sendButtons(from, `📸 *Edit Image*\n\nCurrent: ${p.image_url ? '✅ Set' : '❌ None'}\n\nSend a photo:`, [
+                { id: `prod_clear_img_${pid}`, title: '🗑️ Remove Image' },
+                { id: 'cancel_prod_img', title: '❌ Cancel' }
+            ]);
+            return;
+        }
+
+        if (stateKey === STATE.EDIT_PROD_IMG) {
+            const pid = stateParts[1];
+            if (message?.type === 'image' && message?.image?.id) {
+                await db.product.update({ where: { id: pid }, data: { image_url: message.image.id } });
+                await logAudit({ actorWaId: from, action: 'PRODUCT_UPDATED', entityType: 'PRODUCT', entityId: pid, metadata: { image_url: message.image.id } });
+                await clearState(from);
+                await sendTextMessage(from, '✅ Image updated!');
+                await handleInventoryActions(from, `edit_prod_${pid}`, session, merchant);
+                return;
+            }
+            if (input.startsWith('prod_clear_img_')) {
+                const cpid = input.replace('prod_clear_img_', '');
+                await db.product.update({ where: { id: cpid }, data: { image_url: null } });
+                await clearState(from);
+                await sendTextMessage(from, '✅ Image removed.');
+                await handleInventoryActions(from, `edit_prod_${cpid}`, session, merchant);
+                return;
+            }
+            if (input === 'cancel_prod_img') {
+                await clearState(from);
+                await handleInventoryActions(from, `edit_prod_${pid}`, session, merchant);
+                return;
+            }
+            await sendButtons(from, '⚠️ Send an image or cancel.', [{ id: 'cancel_prod_img', title: '❌ Cancel' }]);
             return;
         }
 

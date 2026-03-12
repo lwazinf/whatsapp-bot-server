@@ -166,9 +166,12 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
 
         const welcomeMsg = buildMerchantWelcome(merchant, platformBranding);
 
+        // Show welcome image first (store banner), then logo if no welcome image
+        const welcomeImageUrl = (merchant as any).welcome_image_url;
         const logoUrl = merchantBranding?.logo_url || merchant.image_url;
-        if (logoUrl) {
-            await sendImageMessage(from, logoUrl, `${merchant.trading_name} logo`);
+        const heroImage = welcomeImageUrl || logoUrl;
+        if (heroImage) {
+            await sendImageMessage(from, heroImage, merchant.trading_name);
         }
 
         if (categories.length > 0) {
@@ -225,7 +228,7 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
     // Handle Browse Shops
     if (input === 'browse_shops') {
         const merchants = await db.merchant.findMany({
-            where: { status: 'ACTIVE', manual_closed: false },
+            where: { status: 'ACTIVE', manual_closed: false, show_in_browse: true } as any,
             take: 10
         });
 
