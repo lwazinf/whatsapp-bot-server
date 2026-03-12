@@ -62,6 +62,7 @@ const sendMessage = async (payload: any): Promise<boolean> => {
  */
 export const sendTextMessage = async (to: string, text: string): Promise<boolean> => {
     return sendMessage({
+        messaging_product: 'whatsapp',
         recipient_type: 'individual',
         to: formatPhoneNumber(to),
         type: 'text',
@@ -79,6 +80,7 @@ export const sendButtons = async (
     footer?: string
 ): Promise<boolean> => {
     const payload: any = {
+        messaging_product: 'whatsapp',
         recipient_type: 'individual',
         to: formatPhoneNumber(to),
         type: 'interactive',
@@ -111,6 +113,7 @@ export const sendListMessage = async (
     footer?: string
 ): Promise<boolean> => {
     const payload: any = {
+        messaging_product: 'whatsapp',
         recipient_type: 'individual',
         to: formatPhoneNumber(to),
         type: 'interactive',
@@ -141,6 +144,7 @@ export const sendListMessage = async (
  */
 export const sendImageMessage = async (to: string, imageUrl: string, caption?: string): Promise<boolean> => {
     return sendMessage({
+        messaging_product: 'whatsapp',
         recipient_type: 'individual',
         to: formatPhoneNumber(to),
         type: 'image',
@@ -158,6 +162,7 @@ export const markAsRead = async (messageId: string): Promise<boolean> => {
     try {
         const { apiUrl, apiKey } = getConfig();
         const response = await axios.post(`${apiUrl}/messages`, {
+            messaging_product: 'whatsapp',
             status: 'read',
             message_id: messageId
         }, {
