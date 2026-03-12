@@ -1,11 +1,8 @@
-import { Prisma, PrismaClient, Merchant, UserSession } from '@prisma/client';
+import { Prisma, Merchant, UserSession } from '@prisma/client';
 import { sendTextMessage, sendButtons, sendListMessage } from './sender';
 import { formatCurrency } from './messageTemplates';
 import { getPlatformBranding } from './platformBranding';
-
-const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
-const db = globalForPrisma.prisma || new PrismaClient();
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db;
+import { db } from '../../lib/db';
 
 const logAudit = async ({
     actorWaId,

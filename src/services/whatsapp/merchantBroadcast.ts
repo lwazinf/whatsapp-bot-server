@@ -1,10 +1,7 @@
-import { PrismaClient, Merchant, UserSession } from '@prisma/client';
+import { Merchant, UserSession } from '@prisma/client';
 import { sendButtons, sendTextMessage } from './sender';
 import { buildOptOutFooter } from './messageTemplates';
-
-const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
-const db = globalForPrisma.prisma || new PrismaClient();
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db;
+import { db } from '../../lib/db';
 
 const STATE = {
     MESSAGE: 'BROADCAST_MESSAGE'
@@ -49,7 +46,8 @@ export const handleBroadcastActions = async (
         const customers = await db.merchantCustomer.findMany({
             where: { merchant_id: merchant.id, opt_out: false },
             select: { wa_id: true },
-            orderBy: { last_interaction_at: 'desc' }
+            orderBy: { last_interaction_at: 'desc' },
+            take: 500
         });
 
         if (customers.length === 0) {
@@ -62,8 +60,8 @@ export const handleBroadcastActions = async (
         let sent = 0;
         for (const customer of customers) {
             // eslint-disable-next-line no-await-in-loop
-            await sendTextMessage(customer.wa_id, payload);
-            sent += 1;
+            const ok = await sendTextMessage(customer.wa_id, payload);
+            if (ok) sent += 1;
             // eslint-disable-next-line no-await-in-loop
             await sleep(BROADCAST_DELAY_MS);
         }

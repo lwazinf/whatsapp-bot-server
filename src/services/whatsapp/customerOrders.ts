@@ -1,11 +1,7 @@
-import { PrismaClient } from '@prisma/client';
 import { sendTextMessage, sendButtons } from './sender';
 import { formatCurrency } from './messageTemplates';
 import { getPlatformBranding } from './platformBranding';
-
-const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
-const db = globalForPrisma.prisma || new PrismaClient();
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db;
+import { db } from '../../lib/db';
 
 export const handleCustomerOrders = async (from: string, input: string): Promise<void> => {
     if (input === 'c_my_orders') {

@@ -1,4 +1,4 @@
-import { PrismaClient, Merchant, UserSession } from '@prisma/client';
+import { Merchant, UserSession } from '@prisma/client';
 import { handleInventoryActions } from './merchantInventory';
 import { handleKitchenActions } from './merchantKitchen';
 import { handleSettingsActions } from './merchantSettings';
@@ -7,10 +7,7 @@ import { handleBroadcastActions } from './merchantBroadcast';
 import { sendButtons, sendTextMessage } from './sender';
 import { formatCurrency } from './messageTemplates';
 import { getPlatformBranding } from './platformBranding';
-
-const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
-const db = globalForPrisma.prisma || new PrismaClient();
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db;
+import { db } from '../../lib/db';
 
 const INVENTORY_PREFIXES = [
     'm_inventory',

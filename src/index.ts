@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
-// Ensure this path matches your file structure
-import { handleIncomingMessage } from './services/whatsapp/handler'; 
+import cron from 'node-cron';
+import { handleIncomingMessage } from './services/whatsapp/handler';
+import { checkStaleOrders } from './services/jobs/orderAlerts';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -21,7 +22,7 @@ app.get('/api/whatsapp/webhook', (req: Request, res: Response) => {
     const challenge = req.query['hub.challenge'];
     const token = req.query['hub.verify_token'];
 
-    if (token === process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN) {
+    if (process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN && token === process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN) {
         console.log('✅ Webhook verified successfully');
         return res.status(200).send(challenge);
     }
@@ -56,7 +57,7 @@ app.post('/api/whatsapp/webhook', async (req: Request, res: Response) => {
             if (status) {
                 console.log(`ℹ️ Message Status Update: ${status.status} for ${status.id}`);
             } else {
-                console.log('❓ Unknown payload format received. Check Railway logs for body content.');
+                console.log('❓ Unknown payload format received. Check Koyeb logs for body content.');
             }
         }
     } catch (err: any) {
@@ -70,4 +71,12 @@ app.listen(Number(PORT), '0.0.0.0', () => {
     console.log(`🚀 OMERU SERVER LIVE`);
     console.log(`📡 Port: ${PORT}`);
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+    // Stale order alerts — runs every 5 minutes
+    cron.schedule('*/5 * * * *', () => {
+        checkStaleOrders().catch(err =>
+            console.error('❌ Order alert job failed:', err.message)
+        );
+    });
+    console.log('⏰ Stale order alert job scheduled (every 5 min)');
 });

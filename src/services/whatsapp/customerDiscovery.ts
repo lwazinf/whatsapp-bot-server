@@ -1,12 +1,8 @@
-import { PrismaClient } from '@prisma/client';
 import { sendTextMessage, sendListMessage, sendImageMessage } from './sender';
 import { formatCurrency, buildMerchantWelcome } from './messageTemplates';
 import { getPlatformBranding } from './platformBranding';
 import { setCustomerLastMerchant, upsertMerchantCustomer } from './merchantCustomers';
-
-const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
-const db = globalForPrisma.prisma || new PrismaClient();
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db;
+import { db } from '../../lib/db';
 
 const MAX_LIST_ROWS = 10;
 

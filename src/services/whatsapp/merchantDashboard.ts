@@ -1,9 +1,6 @@
-import { PrismaClient, Merchant } from '@prisma/client';
+import { Merchant } from '@prisma/client';
 import { sendButtons, sendTextMessage } from './sender';
-
-const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
-const db = globalForPrisma.prisma || new PrismaClient();
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db;
+import { db } from '../../lib/db';
 
 type MerchantStats = {
     salesTotal: number;

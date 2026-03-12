@@ -2,7 +2,9 @@ import { PrismaClient, PlatformBranding } from '@prisma/client';
 
 const DEFAULT_PLATFORM_NAME = 'Omeru';
 const DEFAULT_SWITCH_CODE = 'SwitchOmeru';
-const DEFAULT_PLATFORM_FEE = 0.07;
+const DEFAULT_PLATFORM_FEE = process.env.PLATFORM_FEE_PERCENTAGE
+    ? parseFloat(process.env.PLATFORM_FEE_PERCENTAGE) / 100
+    : 0.05;
 const DEFAULT_PAYOUT_DAY = 'Friday';
 
 export const getPlatformBranding = async (db: PrismaClient): Promise<PlatformBranding | null> => {

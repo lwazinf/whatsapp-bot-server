@@ -1,11 +1,8 @@
-import { PrismaClient, OrderStatus } from '@prisma/client';
+import { OrderStatus } from '@prisma/client';
 import { sendButtons } from '../whatsapp/sender';
 import { formatCurrency } from '../whatsapp/messageTemplates';
 import { getPlatformBranding } from '../whatsapp/platformBranding';
-
-const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
-const db = globalForPrisma.prisma || new PrismaClient();
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db;
+import { db } from '../../lib/db';
 
 const STALE_MINUTES = 10;
 const MAX_ALERTS = 2;

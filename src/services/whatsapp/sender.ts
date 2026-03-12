@@ -38,7 +38,7 @@ const sendMessage = async (payload: any): Promise<boolean> => {
         }
         lastMessageTime = Date.now();
 
-        const response = await api.post('/v1/messages', payload);
+        const response = await api.post('/messages', payload);
         
         if (response.status === 200 || response.status === 201) {
             return true;
@@ -163,7 +163,7 @@ export const sendImageMessage = async (to: string, imageUrl: string, caption?: s
  */
 export const markAsRead = async (messageId: string): Promise<boolean> => {
     try {
-        const response = await api.post('/v1/messages', {
+        const response = await api.post('/messages', {
             status: 'read',
             message_id: messageId
         });

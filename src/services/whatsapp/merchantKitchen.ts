@@ -1,13 +1,10 @@
-import { PrismaClient, OrderStatus, Merchant, UserSession } from '@prisma/client';
+import { OrderStatus, Merchant, UserSession } from '@prisma/client';
 import { sendTextMessage, sendButtons, sendListMessage } from './sender';
 import { formatCurrency } from './messageTemplates';
 import { getPlatformBranding, getPlatformSettings } from './platformBranding';
+import { db } from '../../lib/db';
 
-const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
-const db = globalForPrisma.prisma || new PrismaClient();
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db;
-
-const ADMIN_NUMBER = process.env.ADMIN_WHATSAPP_NUMBER || '27746854339';
+const ADMIN_NUMBER = process.env.ADMIN_WHATSAPP_NUMBER;
 
 export const handleKitchenActions = async (
     from: string, 
@@ -156,9 +153,11 @@ export const handleKitchenActions = async (
 
             // Log fee to admin
             const fee = order.total * platformSettings.platformFee;
-            await sendTextMessage(ADMIN_NUMBER, 
-                `💰 *Order Complete*\n\n🏪 ${merchant.trading_name}\n📦 #${order.id.slice(-5)}\n💵 ${formatCurrency(order.total, { merchant, merchantBranding, platform: platformBranding })}\n📊 Fee: ${formatCurrency(fee, { merchant, merchantBranding, platform: platformBranding })}`
-            );
+            if (ADMIN_NUMBER) {
+                await sendTextMessage(ADMIN_NUMBER,
+                    `💰 *Order Complete*\n\n🏪 ${merchant.trading_name}\n📦 #${order.id.slice(-5)}\n💵 ${formatCurrency(order.total, { merchant, merchantBranding, platform: platformBranding })}\n📊 Fee: ${formatCurrency(fee, { merchant, merchantBranding, platform: platformBranding })}`
+                );
+            }
 
             await sendTextMessage(
                 from,

@@ -1,4 +1,4 @@
-import { PrismaClient, MerchantStatus } from '@prisma/client';
+import { MerchantStatus } from '@prisma/client';
 import { handleMerchantAction } from './merchantEngine';
 import { handleOnboardingAction } from './onboardingEngine';
 import { handleCustomerDiscovery } from './customerDiscovery';
@@ -6,11 +6,7 @@ import { handleCustomerOrders } from './customerOrders';
 import { handlePlatformAdminActions } from './platformAdmin';
 import { sendTextMessage, sendButtons } from './sender';
 import { getPlatformSettings } from './platformBranding';
-
-// Singleton PrismaClient to prevent "too many connections" errors on Supabase
-const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
-const db = globalForPrisma.prisma || new PrismaClient();
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db;
+import { db } from '../../lib/db';
 
 /**
  * Main entry point for all incoming WhatsApp messages
