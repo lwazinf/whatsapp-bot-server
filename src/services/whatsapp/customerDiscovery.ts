@@ -5,6 +5,7 @@ import { setCustomerLastMerchant, upsertMerchantCustomer } from './merchantCusto
 import { db } from '../../lib/db';
 
 const PAGE_SIZE = 8;
+const BROWSE_PAGE_SIZE = 5;
 
 export const handleCustomerDiscovery = async (from: string, input: string): Promise<void> => {
     const platformBranding = await getPlatformBranding(db);
@@ -232,16 +233,16 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
         return;
     }
 
-    // ── Browse shops (paginated) ──────────────────────────────────────────
+    // ── Browse shops (paginated list) ─────────────────────────────────────
     if (input === 'browse_shops' || input.startsWith('browse_shops_p')) {
         const page = input === 'browse_shops' ? 1 : parseInt(input.replace('browse_shops_p', ''), 10) || 1;
-        const skip = (page - 1) * PAGE_SIZE;
+        const skip = (page - 1) * BROWSE_PAGE_SIZE;
 
         const [merchants, total] = await Promise.all([
             db.merchant.findMany({
                 where: { status: 'ACTIVE', manual_closed: false, show_in_browse: true } as any,
                 orderBy: { trading_name: 'asc' },
-                take: PAGE_SIZE,
+                take: BROWSE_PAGE_SIZE,
                 skip
             }),
             db.merchant.count({
@@ -250,29 +251,36 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
         ]);
 
         if (total === 0) {
-            await sendButtons(from, '🔍 No shops are listed right now. Check back soon!', [
+            await sendButtons(from, '🔍 No shops listed right now. Check back soon!', [
                 { id: 'c_find_shop', title: '🔍 Find by Handle' },
                 { id: 'c_home', title: '🏠 Home' }
             ]);
             return;
         }
 
-        const totalPages = Math.ceil(total / PAGE_SIZE);
+        const totalPages = Math.ceil(total / BROWSE_PAGE_SIZE);
 
-        let msg = `🔥 *Browse Shops* (${page}/${totalPages})\n\n`;
-        merchants.forEach((m: any) => {
-            msg += `• *@${m.handle}* — ${m.trading_name}\n`;
-        });
-        msg += '\n_Tap a handle above or use the buttons below._';
+        const rows = merchants.map((m: any) => ({
+            id: `@${m.handle}`,
+            title: m.trading_name.substring(0, 24),
+            description: `@${m.handle}`
+        }));
 
-        await sendTextMessage(from, msg);
+        await sendListMessage(
+            from,
+            `🔥 *Browse Shops* — Page ${page} of ${totalPages}`,
+            '🛒 Open a Shop',
+            [{ title: 'Available Shops', rows }]
+        );
 
-        // Pagination + home buttons
-        const navBtns: Array<{ id: string; title: string }> = [];
-        if (page > 1) navBtns.push({ id: `browse_shops_p${page - 1}`, title: `◀ Prev (${page - 1}|${totalPages})` });
-        if (page < totalPages) navBtns.push({ id: `browse_shops_p${page + 1}`, title: `Next (${page + 1}|${totalPages}) ▶` });
-        navBtns.push({ id: 'c_home', title: '🏠 Home' });
-        await sendButtons(from, 'Navigate:', navBtns.slice(0, 3));
+        // Pagination buttons — only shown when there are more pages
+        if (totalPages > 1) {
+            const navBtns: Array<{ id: string; title: string }> = [];
+            if (page > 1) navBtns.push({ id: `browse_shops_p${page - 1}`, title: `◀ Prev (${page - 1}/${totalPages})` });
+            if (page < totalPages) navBtns.push({ id: `browse_shops_p${page + 1}`, title: `Next (${page + 1}/${totalPages}) ▶` });
+            navBtns.push({ id: 'c_home', title: '🏠 Home' });
+            await sendButtons(from, 'Navigate:', navBtns.slice(0, 3));
+        }
         return;
     }
 
