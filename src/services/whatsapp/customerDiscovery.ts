@@ -7,10 +7,413 @@ import { db } from '../../lib/db';
 const PAGE_SIZE = 8;
 const BROWSE_PAGE_SIZE = 5;
 
+// ── Cart helpers ──────────────────────────────────────────────────────────────
+
+type CartItem = {
+    product_id: string;
+    product_name: string;
+    price: number;
+    qty: number;
+    variant_id?: string;
+    variant_label?: string;
+};
+
+type Cart = {
+    merchant_id: string;
+    merchant_name: string;
+    merchant_handle: string;
+    items: CartItem[];
+};
+
+const getCart = async (waId: string): Promise<Cart | null> => {
+    const session = await db.userSession.findUnique({ where: { wa_id: waId }, select: { cart_json: true } });
+    if (!session?.cart_json) return null;
+    try { return JSON.parse(session.cart_json) as Cart; } catch { return null; }
+};
+
+const saveCart = async (waId: string, cart: Cart | null): Promise<void> => {
+    await db.userSession.update({
+        where: { wa_id: waId },
+        data: { cart_json: cart ? JSON.stringify(cart) : null }
+    });
+};
+
+const cartTotal = (cart: Cart): number =>
+    cart.items.reduce((sum, i) => sum + i.price * i.qty, 0);
+
+// ── Wishlist helpers ──────────────────────────────────────────────────────────
+
+const isWishlisted = async (waId: string, productId: string): Promise<boolean> => {
+    const entry = await db.wishlist.findUnique({
+        where: { wa_id_product_id: { wa_id: waId, product_id: productId } }
+    });
+    return !!entry;
+};
+
+const toggleWishlist = async (waId: string, productId: string): Promise<boolean> => {
+    const existing = await db.wishlist.findUnique({
+        where: { wa_id_product_id: { wa_id: waId, product_id: productId } }
+    });
+    if (existing) {
+        await db.wishlist.delete({ where: { wa_id_product_id: { wa_id: waId, product_id: productId } } });
+        return false;
+    }
+    await db.wishlist.create({ data: { wa_id: waId, product_id: productId } });
+    return true;
+};
+
+// ── Cart display ──────────────────────────────────────────────────────────────
+
+const sendCartView = async (from: string, cart: Cart, platformBranding: any): Promise<void> => {
+    const merchant = await db.merchant.findUnique({ where: { id: cart.merchant_id } });
+    const merchantBranding = merchant
+        ? await db.merchantBranding.findUnique({ where: { merchant_id: merchant.id } })
+        : null;
+
+    let msg = `🛒 *Your Cart*  —  ${cart.merchant_name}\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+    cart.items.forEach((item, i) => {
+        const label = item.variant_label ? ` (${item.variant_label})` : '';
+        const lineTotal = formatCurrency(item.price * item.qty, { merchant, merchantBranding, platform: platformBranding });
+        msg += `${i + 1}. ${item.qty}x ${item.product_name}${label}  —  ${lineTotal}\n`;
+    });
+    msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `💰 *Total: ${formatCurrency(cartTotal(cart), { merchant, merchantBranding, platform: platformBranding })}*`;
+
+    await sendButtons(from, msg, [
+        { id: 'cart_checkout', title: '✅ Checkout' },
+        { id: `@${cart.merchant_handle}`, title: '➕ Add More' },
+        { id: 'cart_clear', title: '🗑️ Clear Cart' }
+    ]);
+};
+
+// ── Main handler ──────────────────────────────────────────────────────────────
+
 export const handleCustomerDiscovery = async (from: string, input: string): Promise<void> => {
     const platformBranding = await getPlatformBranding(db);
 
-    // ── Category product list ─────────────────────────────────────────────
+    // ── View cart ─────────────────────────────────────────────────────────────
+    if (input === 'c_cart') {
+        const cart = await getCart(from);
+        if (!cart || cart.items.length === 0) {
+            await sendButtons(from, '🛒 Your cart is empty.', [
+                { id: 'browse_shops', title: '🛍️ Browse Shops' },
+                { id: 'c_home', title: '🏠 Home' }
+            ]);
+            return;
+        }
+        await sendCartView(from, cart, platformBranding);
+        return;
+    }
+
+    // ── Clear cart ────────────────────────────────────────────────────────────
+    if (input === 'cart_clear') {
+        await saveCart(from, null);
+        await sendButtons(from, '🗑️ Cart cleared.', [
+            { id: 'browse_shops', title: '🛍️ Browse Shops' },
+            { id: 'c_home', title: '🏠 Home' }
+        ]);
+        return;
+    }
+
+    // ── Checkout ──────────────────────────────────────────────────────────────
+    if (input === 'cart_checkout') {
+        const cart = await getCart(from);
+        if (!cart || cart.items.length === 0) {
+            await sendTextMessage(from, '⚠️ Your cart is empty.');
+            return;
+        }
+
+        const merchant = await db.merchant.findUnique({ where: { id: cart.merchant_id } });
+        const merchantBranding = merchant
+            ? await db.merchantBranding.findUnique({ where: { merchant_id: merchant.id } })
+            : null;
+
+        if (!merchant || merchant.status !== 'ACTIVE') {
+            await sendTextMessage(from, '❌ This shop is no longer available.');
+            await saveCart(from, null);
+            return;
+        }
+
+        const total = cartTotal(cart);
+        let summary = `🛒 *Order Summary*\n\n`;
+        summary += `🏪 ${merchant.trading_name}\n`;
+        summary += `━━━━━━━━━━━━━━━━━━━━\n`;
+        cart.items.forEach(item => {
+            const label = item.variant_label ? ` (${item.variant_label})` : '';
+            summary += `• ${item.qty}x ${item.product_name}${label}  —  ${formatCurrency(item.price * item.qty, { merchant, merchantBranding, platform: platformBranding })}\n`;
+        });
+        summary += `━━━━━━━━━━━━━━━━━━━━\n`;
+        summary += `💰 *Total: ${formatCurrency(total, { merchant, merchantBranding, platform: platformBranding })}*`;
+
+        await sendButtons(from, summary, [
+            { id: 'cart_confirm_order', title: '✅ Confirm Order' },
+            { id: 'c_cart', title: '✏️ Edit Cart' }
+        ]);
+        return;
+    }
+
+    // ── Confirm & place order ─────────────────────────────────────────────────
+    if (input === 'cart_confirm_order') {
+        const cart = await getCart(from);
+        if (!cart || cart.items.length === 0) {
+            await sendTextMessage(from, '⚠️ Your cart is empty.');
+            return;
+        }
+
+        const merchant = await db.merchant.findUnique({ where: { id: cart.merchant_id } });
+        const merchantBranding = merchant
+            ? await db.merchantBranding.findUnique({ where: { merchant_id: merchant.id } })
+            : null;
+
+        if (!merchant) {
+            await sendTextMessage(from, '❌ Shop not found.');
+            return;
+        }
+
+        const total = cartTotal(cart);
+        const itemsSummary = cart.items
+            .map(i => `${i.qty}x ${i.product_name}${i.variant_label ? ` (${i.variant_label})` : ''}`)
+            .join(', ');
+
+        const order = await db.order.create({
+            data: {
+                customer_id: from,
+                merchant_id: merchant.id,
+                total,
+                items_summary: itemsSummary,
+                status: 'PENDING',
+                order_items: {
+                    create: cart.items.map(item => ({
+                        product_id: item.product_id,
+                        quantity: item.qty,
+                        price: item.price
+                    }))
+                }
+            }
+        });
+
+        // Clear cart after order
+        await saveCart(from, null);
+
+        // Notify merchant
+        const notif = [
+            `🛒 *New Order! #${order.id.slice(-5)}*`,
+            `👤 Customer: ${from}`,
+            `━━━━━━━━━━━━━━━━━━━━`,
+            itemsSummary,
+            `━━━━━━━━━━━━━━━━━━━━`,
+            `💰 Total: ${formatCurrency(total, { merchant, merchantBranding, platform: platformBranding })}`
+        ].join('\n');
+        await sendTextMessage(merchant.wa_id, notif);
+
+        // ── OZOW PAYMENT PLACEHOLDER ─────────────────────────────────────────
+        // TODO: Generate Ozow payment link here and send to customer.
+        // const paymentUrl = await createOzowPayment({ orderId: order.id, amount: total, ... });
+        // await sendTextMessage(from, `💳 *Pay here:* ${paymentUrl}`);
+        // ── END OZOW PLACEHOLDER ─────────────────────────────────────────────
+
+        const confirmMsg = [
+            `✅ *Order Placed! #${order.id.slice(-5)}*`,
+            ``,
+            `🏪 ${merchant.trading_name}`,
+            `💰 ${formatCurrency(total, { merchant, merchantBranding, platform: platformBranding })}`,
+            ``,
+            `_The shop will prepare your order. Payment will be enabled soon — for now the shop owner will be in touch._`
+        ].join('\n');
+
+        await sendButtons(from, confirmMsg, [
+            { id: 'c_my_orders', title: '📦 My Orders' },
+            { id: 'browse_shops', title: '🛍️ Browse More' }
+        ]);
+        return;
+    }
+
+    // ── Wishlist toggle ───────────────────────────────────────────────────────
+    if (input.startsWith('wish_prod_')) {
+        const productId = input.replace('wish_prod_', '');
+        const product = await db.product.findUnique({
+            where: { id: productId },
+            include: { merchant: true }
+        });
+        if (!product || !product.merchant) {
+            await sendTextMessage(from, '❌ Item not found.');
+            return;
+        }
+
+        const added = await toggleWishlist(from, productId);
+        const wishBtn = added
+            ? { id: `wish_prod_${productId}`, title: '💔 Remove Wishlist' }
+            : { id: `wish_prod_${productId}`, title: '❤️ Wishlist' };
+
+        await sendButtons(
+            from,
+            added ? `❤️ *${product.name}* saved to your Wishlist!` : `💔 *${product.name}* removed from Wishlist.`,
+            [
+                wishBtn,
+                { id: `prod_${productId}`, title: '↩️ Back to Item' },
+                { id: `@${product.merchant.handle}`, title: '🏪 Shop' }
+            ]
+        );
+        return;
+    }
+
+    // ── View wishlist ─────────────────────────────────────────────────────────
+    if (input === 'c_wishlist') {
+        const entries = await db.wishlist.findMany({
+            where: { wa_id: from },
+            include: { product: { include: { merchant: true } } },
+            orderBy: { createdAt: 'desc' },
+            take: PAGE_SIZE
+        });
+
+        if (entries.length === 0) {
+            await sendButtons(from, '❤️ Your Wishlist is empty.\n\nBrowse shops and save items you love!', [
+                { id: 'browse_shops', title: '🛍️ Browse Shops' },
+                { id: 'c_account', title: '↩️ My Account' }
+            ]);
+            return;
+        }
+
+        const rows = entries.map((e: any) => ({
+            id: `prod_${e.product.id}`,
+            title: e.product.name.substring(0, 24),
+            description: `${e.product.merchant?.trading_name || 'Shop'}`
+        }));
+
+        await sendListMessage(from, `❤️ *Your Wishlist* (${entries.length} item${entries.length !== 1 ? 's' : ''})`, '👀 View Item', [
+            { title: 'Saved Items', rows }
+        ]);
+        return;
+    }
+
+    // ── Add product to cart ───────────────────────────────────────────────────
+    if (input.startsWith('add_cart_prod_')) {
+        const productId = input.replace('add_cart_prod_', '');
+        const product = await db.product.findUnique({
+            where: { id: productId },
+            include: { merchant: true }
+        });
+        if (!product || !product.merchant || product.status !== 'ACTIVE' || !product.is_in_stock) {
+            await sendTextMessage(from, '❌ Item is no longer available.');
+            return;
+        }
+
+        const existing = await getCart(from);
+        if (existing && existing.merchant_id !== product.merchant.id) {
+            await sendButtons(from,
+                `⚠️ Your cart has items from *${existing.merchant_name}*.\n\nStart a new cart for *${product.merchant.trading_name}*?`,
+                [
+                    { id: `replace_cart_prod_${productId}`, title: '🆕 New Cart' },
+                    { id: 'c_cart', title: '🛒 Keep Current' }
+                ]
+            );
+            return;
+        }
+
+        const cart: Cart = existing || {
+            merchant_id: product.merchant.id,
+            merchant_name: product.merchant.trading_name,
+            merchant_handle: product.merchant.handle,
+            items: []
+        };
+
+        const idx = cart.items.findIndex(i => i.product_id === productId && !i.variant_id);
+        if (idx >= 0) {
+            cart.items[idx].qty += 1;
+        } else {
+            cart.items.push({ product_id: productId, product_name: product.name, price: product.price, qty: 1 });
+        }
+        await saveCart(from, cart);
+
+        const merchantBranding = await db.merchantBranding.findUnique({ where: { merchant_id: product.merchant.id } });
+        await sendButtons(from,
+            `✅ *${product.name}* added to cart!\n🛒 ${cart.items.reduce((s, i) => s + i.qty, 0)} item(s)  —  ${formatCurrency(cartTotal(cart), { merchant: product.merchant, merchantBranding, platform: platformBranding })}`,
+            [
+                { id: 'c_cart', title: '🛒 View Cart' },
+                { id: `@${product.merchant.handle}`, title: '➕ Add More' },
+                { id: 'cart_checkout', title: '✅ Checkout' }
+            ]
+        );
+        return;
+    }
+
+    // ── Add variant to cart ───────────────────────────────────────────────────
+    if (input.startsWith('add_cart_variant_')) {
+        const variantId = input.replace('add_cart_variant_', '');
+        const variant = await db.productVariant.findUnique({
+            where: { id: variantId },
+            include: { product: { include: { merchant: true } } }
+        });
+        if (!variant || !variant.product?.merchant || !variant.is_in_stock) {
+            await sendTextMessage(from, '❌ Item is no longer available.');
+            return;
+        }
+
+        const merchant = variant.product.merchant;
+        const existing = await getCart(from);
+        if (existing && existing.merchant_id !== merchant.id) {
+            await sendButtons(from,
+                `⚠️ Your cart has items from *${existing.merchant_name}*.\n\nStart a new cart for *${merchant.trading_name}*?`,
+                [
+                    { id: `replace_cart_variant_${variantId}`, title: '🆕 New Cart' },
+                    { id: 'c_cart', title: '🛒 Keep Current' }
+                ]
+            );
+            return;
+        }
+
+        const variantLabel = [variant.size, variant.color].filter(Boolean).join(' • ');
+        const cart: Cart = existing || {
+            merchant_id: merchant.id,
+            merchant_name: merchant.trading_name,
+            merchant_handle: merchant.handle,
+            items: []
+        };
+
+        const idx = cart.items.findIndex(i => i.variant_id === variantId);
+        if (idx >= 0) {
+            cart.items[idx].qty += 1;
+        } else {
+            cart.items.push({
+                product_id: variant.product_id,
+                product_name: variant.product.name,
+                price: variant.price,
+                qty: 1,
+                variant_id: variantId,
+                variant_label: variantLabel || undefined
+            });
+        }
+        await saveCart(from, cart);
+
+        const merchantBranding = await db.merchantBranding.findUnique({ where: { merchant_id: merchant.id } });
+        await sendButtons(from,
+            `✅ *${variant.product.name}${variantLabel ? ` (${variantLabel})` : ''}* added to cart!\n🛒 ${cart.items.reduce((s, i) => s + i.qty, 0)} item(s)  —  ${formatCurrency(cartTotal(cart), { merchant, merchantBranding, platform: platformBranding })}`,
+            [
+                { id: 'c_cart', title: '🛒 View Cart' },
+                { id: `@${merchant.handle}`, title: '➕ Add More' },
+                { id: 'cart_checkout', title: '✅ Checkout' }
+            ]
+        );
+        return;
+    }
+
+    // ── Replace cart (cross-merchant) ────────────────────────────────────────
+    if (input.startsWith('replace_cart_prod_')) {
+        const productId = input.replace('replace_cart_prod_', '');
+        await saveCart(from, null);
+        await handleCustomerDiscovery(from, `add_cart_prod_${productId}`);
+        return;
+    }
+
+    if (input.startsWith('replace_cart_variant_')) {
+        const variantId = input.replace('replace_cart_variant_', '');
+        await saveCart(from, null);
+        await handleCustomerDiscovery(from, `add_cart_variant_${variantId}`);
+        return;
+    }
+
+    // ── Category product list ─────────────────────────────────────────────────
     if (input.startsWith('cat_')) {
         const [, merchantId, categoryId] = input.split('_');
         if (!merchantId) {
@@ -64,7 +467,7 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
         return;
     }
 
-    // ── Product detail ────────────────────────────────────────────────────
+    // ── Product detail ────────────────────────────────────────────────────────
     if (input.startsWith('prod_')) {
         const productId = input.replace('prod_', '');
         const product = await db.product.findUnique({
@@ -81,43 +484,61 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
         await setCustomerLastMerchant(from, product.merchant.id);
         const merchantBranding = await db.merchantBranding.findUnique({ where: { merchant_id: product.merchant.id } });
 
-        // Send product image if available
+        const displayPrice = product.variants.length
+            ? Math.min(...product.variants.map((v: any) => v.price))
+            : product.price;
+        const priceStr = formatCurrency(displayPrice, { merchant: product.merchant, merchantBranding, platform: platformBranding });
+        const stockBadge = product.is_in_stock ? '✅ In Stock' : '❌ Out of Stock';
+
+        const caption = [
+            `🛍️ *${product.name}*`,
+            product.description ? product.description.substring(0, 150) : '',
+            `💰 ${priceStr}  •  ${stockBadge}`
+        ].filter(Boolean).join('\n');
+
         if (product.image_url) {
-            await sendImageMessage(from, product.image_url, product.name);
+            await sendImageMessage(from, product.image_url, caption);
+        } else {
+            await sendTextMessage(from, caption);
         }
 
-        if (product.variants.length === 0) {
-            const body = [
-                `🛍️ *${product.name}*`,
-                product.description ? `\n${product.description}` : '',
-                `\n💰 ${formatCurrency(product.price, { merchant: product.merchant, merchantBranding, platform: platformBranding })}`,
-                '\n_Contact the shop to place your order._'
-            ].filter(Boolean).join('');
-            await sendTextMessage(from, body);
-            await sendButtons(from, '⚡ What\'s next?', [
-                { id: `@${product.merchant.handle}`, title: '↩️ Back to Shop' },
-                { id: 'c_discover', title: '🏠 Discover' }
-            ]);
+        if (product.variants.length > 0) {
+            // Has variants — show picker first
+            const rows = product.variants.map((variant: any) => ({
+                id: `variant_${variant.id}`,
+                title: `${variant.size || 'Standard'}${variant.color ? ` • ${variant.color}` : ''}`.substring(0, 24),
+                description: [
+                    formatCurrency(variant.price, { merchant: product.merchant!, merchantBranding, platform: platformBranding }),
+                    variant.sku ? variant.sku : '',
+                    variant.is_in_stock ? '' : '❌ Out of Stock'
+                ].filter(Boolean).join('  •  ')
+            }));
+            await sendListMessage(from, '👇 Pick your option:', '🛍️ Choose Variant', [{ title: 'Variants', rows }]);
             return;
         }
 
-        const rows = product.variants.map((variant: any) => ({
-            id: `variant_${variant.id}`,
-            title: `${variant.size || 'Standard'}${variant.color ? ` • ${variant.color}` : ''}`.substring(0, 24),
-            description: `${formatCurrency(variant.price, { merchant: product.merchant, merchantBranding, platform: platformBranding })}${variant.sku ? ` • ${variant.sku}` : ''}`
-        }));
+        // No variants
+        const wishlisted = await isWishlisted(from, product.id);
+        const wishBtn = wishlisted
+            ? { id: `wish_prod_${product.id}`, title: '💔 Remove Wishlist' }
+            : { id: `wish_prod_${product.id}`, title: '❤️ Wishlist' };
 
-        const headerText = [
-            `🛍️ *${product.name}*`,
-            product.description ? product.description.substring(0, 100) : '',
-            `👇 Pick your option:`
-        ].filter(Boolean).join('\n');
-
-        await sendListMessage(from, headerText, '🛍️ Choose Variant', [{ title: 'Variants', rows }]);
+        if (product.is_in_stock) {
+            await sendButtons(from, '⚡ Ready to order?', [
+                { id: `add_cart_prod_${product.id}`, title: '🛒 Add to Cart' },
+                wishBtn,
+                { id: `@${product.merchant.handle}`, title: '↩️ Back to Shop' }
+            ]);
+        } else {
+            await sendButtons(from, '😔 This item is currently out of stock.', [
+                wishBtn,
+                { id: `@${product.merchant.handle}`, title: '↩️ Back to Shop' }
+            ]);
+        }
         return;
     }
 
-    // ── Variant detail ────────────────────────────────────────────────────
+    // ── Variant detail ────────────────────────────────────────────────────────
     if (input.startsWith('variant_')) {
         const variantId = input.replace('variant_', '');
         const variant = await db.productVariant.findUnique({
@@ -134,29 +555,44 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
         await setCustomerLastMerchant(from, variant.product.merchant.id);
         const merchantBranding = await db.merchantBranding.findUnique({ where: { merchant_id: variant.product.merchant.id } });
 
-        // Send product image for the variant if available
-        if (variant.product.image_url) {
-            await sendImageMessage(from, variant.product.image_url, variant.product.name);
-        }
+        const priceStr = formatCurrency(variant.price, { merchant: variant.product.merchant, merchantBranding, platform: platformBranding });
+        const stockBadge = variant.is_in_stock ? '✅ In Stock' : '❌ Out of Stock';
 
-        const parts = [
+        const caption = [
             `🛍️ *${variant.product.name}*`,
             variant.size ? `📐 Size: ${variant.size}` : '',
             variant.color ? `🎨 Colour: ${variant.color}` : '',
             variant.sku ? `🏷️ SKU: ${variant.sku}` : '',
-            `💰 ${formatCurrency(variant.price, { merchant: variant.product.merchant, merchantBranding, platform: platformBranding })}`,
-            '\n_Contact the shop to place your order._'
+            `💰 ${priceStr}  •  ${stockBadge}`
         ].filter(Boolean).join('\n');
 
-        await sendTextMessage(from, parts);
-        await sendButtons(from, '⚡ What\'s next?', [
-            { id: `@${variant.product.merchant.handle}`, title: '↩️ Back to Shop' },
-            { id: 'c_discover', title: '🏠 Discover' }
-        ]);
+        if (variant.product.image_url) {
+            await sendImageMessage(from, variant.product.image_url, caption);
+        } else {
+            await sendTextMessage(from, caption);
+        }
+
+        const wishlisted = await isWishlisted(from, variant.product.id);
+        const wishBtn = wishlisted
+            ? { id: `wish_prod_${variant.product.id}`, title: '💔 Remove Wishlist' }
+            : { id: `wish_prod_${variant.product.id}`, title: '❤️ Wishlist' };
+
+        if (variant.is_in_stock) {
+            await sendButtons(from, '⚡ Ready to order?', [
+                { id: `add_cart_variant_${variant.id}`, title: '🛒 Add to Cart' },
+                wishBtn,
+                { id: `@${variant.product.merchant.handle}`, title: '↩️ Back to Shop' }
+            ]);
+        } else {
+            await sendButtons(from, '😔 This variant is out of stock.', [
+                wishBtn,
+                { id: `@${variant.product.merchant.handle}`, title: '↩️ Back to Shop' }
+            ]);
+        }
         return;
     }
 
-    // ── Shop via @handle ──────────────────────────────────────────────────
+    // ── Shop via @handle ──────────────────────────────────────────────────────
     if (input.startsWith('@')) {
         const handle = input.replace('@', '').toLowerCase().trim();
 
@@ -233,7 +669,7 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
         return;
     }
 
-    // ── Browse shops (paginated list) ─────────────────────────────────────
+    // ── Browse shops (paginated list) ─────────────────────────────────────────
     if (input === 'browse_shops' || input.startsWith('browse_shops_p')) {
         const page = input === 'browse_shops' ? 1 : parseInt(input.replace('browse_shops_p', ''), 10) || 1;
         const skip = (page - 1) * BROWSE_PAGE_SIZE;
@@ -273,7 +709,6 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
             [{ title: 'Available Shops', rows }]
         );
 
-        // Pagination buttons — only shown when there are more pages
         if (totalPages > 1) {
             const navBtns: Array<{ id: string; title: string }> = [];
             if (page > 1) navBtns.push({ id: `browse_shops_p${page - 1}`, title: `◀ Prev (${page - 1}/${totalPages})` });

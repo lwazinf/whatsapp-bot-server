@@ -42,6 +42,7 @@ model UserSession {
   active_prod_id     String?
   last_merchant_id   String?
   active_merchant_id String?
+  cart_json          String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 }
@@ -183,6 +184,7 @@ model Product {
   status      String      @default("ACTIVE")
   order_items OrderItem[]
   variants    ProductVariant[]
+  wishlist    Wishlist[]
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 }
@@ -222,6 +224,16 @@ model OrderItem {
   product    Product @relation(fields: [product_id], references: [id])
   quantity   Int
   price      Float
+}
+
+model Wishlist {
+  id         String   @id @default(cuid())
+  wa_id      String
+  product_id String
+  product    Product  @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([wa_id, product_id])
 }
 
 model AuditLog {

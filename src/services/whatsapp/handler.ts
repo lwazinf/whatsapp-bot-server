@@ -205,10 +205,11 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
 
         if (input === 'c_account') {
             await sendButtons(from,
-                '👤 *My Account*\n\nManage your orders and settings.',
+                '👤 *My Account*\n\nManage your orders and saved items.',
                 [
                     { id: 'c_my_orders', title: '📦 My Orders' },
-                    { id: 'c_settings', title: '⚙️ Help & Settings' }
+                    { id: 'c_wishlist', title: '❤️ Wishlist' },
+                    { id: 'c_settings', title: '⚙️ Settings & Help' }
                 ]
             );
             return;
@@ -237,8 +238,16 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
             return;
         }
 
-        // Customer Discovery & Orders
-        if (input.startsWith('@') || input === 'browse_shops' || input.startsWith('browse_shops_p') || input.startsWith('cat_') || input.startsWith('prod_') || input.startsWith('variant_')) {
+        // Customer Discovery, Cart & Wishlist
+        if (
+            input.startsWith('@') ||
+            input === 'browse_shops' || input.startsWith('browse_shops_p') ||
+            input.startsWith('cat_') ||
+            input.startsWith('prod_') || input.startsWith('variant_') ||
+            input.startsWith('add_cart_') || input.startsWith('replace_cart_') ||
+            input === 'c_cart' || input === 'cart_clear' || input === 'cart_checkout' || input === 'cart_confirm_order' ||
+            input.startsWith('wish_prod_') || input === 'c_wishlist'
+        ) {
             await handleCustomerDiscovery(from, input);
             return;
         }
@@ -280,13 +289,27 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
 // ============ CUSTOMER WELCOME ============
 
 const sendCustomerWelcome = async (from: string): Promise<void> => {
+    // Check for active cart
+    const session = await db.userSession.findUnique({ where: { wa_id: from }, select: { cart_json: true } });
+    let cartHint = '';
+    try {
+        if (session?.cart_json) {
+            const cart = JSON.parse(session.cart_json);
+            const count = cart.items?.reduce((s: number, i: any) => s + i.qty, 0) || 0;
+            if (count > 0) cartHint = `\n🛒 You have ${count} item${count !== 1 ? 's' : ''} in your cart!`;
+        }
+    } catch { /* ignore */ }
+
+    const buttons: Array<{ id: string; title: string }> = [
+        { id: 'c_discover', title: '🛍️ Discover Shops' },
+        { id: 'c_account', title: '📦 My Account' }
+    ];
+    if (cartHint) buttons.splice(1, 0, { id: 'c_cart', title: '🛒 My Cart' });
+
     await sendButtons(
         from,
-        '🔥 Welcome to *Omeru*! Shop smarter, right here on WhatsApp.\n\n_What are you looking for?_',
-        [
-            { id: 'c_discover', title: '🛍️ Discover Shops' },
-            { id: 'c_account', title: '📦 My Account' }
-        ]
+        `🔥 Welcome to *Omeru*! Shop smarter, right here on WhatsApp.${cartHint}\n\n_What are you looking for?_`,
+        buttons.slice(0, 3)
     );
 };
 
