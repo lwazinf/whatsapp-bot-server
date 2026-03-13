@@ -1,5 +1,7 @@
 import { Merchant } from '@prisma/client';
 import { sendButtons, sendTextMessage } from './sender';
+import { formatCurrency } from './messageTemplates';
+import { getPlatformBranding } from './platformBranding';
 import { db } from '../../lib/db';
 
 type MerchantStats = {
@@ -62,38 +64,52 @@ export const getMerchantStats = async (merchantId: string): Promise<MerchantStat
 export const showMerchantDashboard = async (to: string, merchant: Merchant): Promise<void> => {
     try {
         // Clear any active state
-        await db.userSession.update({ 
-            where: { wa_id: to }, 
-            data: { active_prod_id: null } 
-        });
-        
-        const status = merchant.manual_closed ? '🔴 CLOSED' : '🟢 OPEN';
-        
-        // Get pending orders count
-        const pendingCount = await db.order.count({
-            where: { 
-                merchant_id: merchant.id, 
-                status: { in: ['PENDING', 'PAID'] } 
-            }
+        await db.userSession.update({
+            where: { wa_id: to },
+            data: { active_prod_id: null }
         });
 
-        let msg = `🏪 *${merchant.trading_name}*\n`;
-        msg += `📍 Status: ${status}\n`;
-        
-        if (pendingCount > 0) {
-            msg += `\n🔔 *${pendingCount} order${pendingCount > 1 ? 's' : ''} waiting!*\n`;
-        }
-        
-        msg += '\nManage your store below.';
+        const platformBranding = await getPlatformBranding(db);
+        const merchantBranding = await db.merchantBranding.findUnique({ where: { merchant_id: merchant.id } });
+
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+
+        const [pendingCount, todayOrders, todayRevenue] = await Promise.all([
+            db.order.count({
+                where: { merchant_id: merchant.id, status: { in: ['PENDING', 'PAID'] } }
+            }),
+            db.order.count({
+                where: { merchant_id: merchant.id, createdAt: { gte: todayStart } }
+            }),
+            db.order.aggregate({
+                where: {
+                    merchant_id: merchant.id,
+                    createdAt: { gte: todayStart },
+                    status: { in: ['PAID', 'READY_FOR_PICKUP', 'COMPLETED'] }
+                },
+                _sum: { total: true }
+            })
+        ]);
+
+        const statusBadge = merchant.manual_closed ? '🔴 Closed' : '🟢 Open';
+        const revenueToday = todayRevenue._sum.total ?? 0;
+
+        let card = `🏪 *${merchant.trading_name}*  ${statusBadge}\n`;
+        card += `━━━━━━━━━━━━━━━━━━━━\n`;
+        card += `📅 *Today*\n`;
+        card += `Orders:   ${todayOrders}  |  Pending: ${pendingCount}\n`;
+        card += `Revenue:  ${formatCurrency(revenueToday, { merchant, merchantBranding, platform: platformBranding })}\n`;
+        card += `━━━━━━━━━━━━━━━━━━━━`;
 
         const kitchenTitle = pendingCount > 0 ? `🍳 Kitchen (${pendingCount})` : '🍳 Kitchen';
 
-        await sendButtons(to, msg, [
+        await sendButtons(to, card, [
             { id: 'm_kitchen', title: kitchenTitle.substring(0, 20) },
-            { id: 'm_inventory', title: '📦 My Menu' },
+            { id: 'm_inventory', title: '📦 Products' },
             { id: 'm_stats', title: '📊 Stats' }
         ]);
-        await sendButtons(to, 'More options:', [
+        await sendButtons(to, '⚡ More:', [
             { id: 'm_broadcast', title: '📣 Broadcast' },
             { id: 'm_settings', title: '🛠️ Settings' }
         ]);

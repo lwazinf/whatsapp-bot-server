@@ -36,7 +36,10 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
         });
 
         if (products.length === 0) {
-            await sendTextMessage(from, '📭 No items found in this category.');
+            await sendButtons(from, '📭 No items in this category right now.', [
+                { id: `cat_${merchantId}_all`, title: '🛒 See All Items' },
+                { id: 'c_discover', title: '🏠 Discover' }
+            ]);
             return;
         }
 
@@ -53,7 +56,7 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
 
         await sendListMessage(
             from,
-            `📂 *${merchant.trading_name}* (${products.length} items)`,
+            `🔥 *${merchant.trading_name}* — ${products.length} item${products.length !== 1 ? 's' : ''} available`,
             '📖 View Items',
             [{ title: 'Items', rows }]
         );
@@ -84,12 +87,16 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
 
         if (product.variants.length === 0) {
             const body = [
-                `📦 *${product.name}*`,
+                `🛍️ *${product.name}*`,
                 product.description ? `\n${product.description}` : '',
                 `\n💰 ${formatCurrency(product.price, { merchant: product.merchant, merchantBranding, platform: platformBranding })}`,
-                '\n_Contact the shop to order._'
+                '\n_Contact the shop to place your order._'
             ].filter(Boolean).join('');
             await sendTextMessage(from, body);
+            await sendButtons(from, '⚡ What\'s next?', [
+                { id: `@${product.merchant.handle}`, title: '↩️ Back to Shop' },
+                { id: 'c_discover', title: '🏠 Discover' }
+            ]);
             return;
         }
 
@@ -102,7 +109,7 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
         const headerText = [
             `🛍️ *${product.name}*`,
             product.description ? product.description.substring(0, 100) : '',
-            `Choose a variant to order:`
+            `👇 Pick your option:`
         ].filter(Boolean).join('\n');
 
         await sendListMessage(from, headerText, '🛍️ Choose Variant', [{ title: 'Variants', rows }]);
@@ -137,10 +144,14 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
             variant.color ? `🎨 Colour: ${variant.color}` : '',
             variant.sku ? `🏷️ SKU: ${variant.sku}` : '',
             `💰 ${formatCurrency(variant.price, { merchant: variant.product.merchant, merchantBranding, platform: platformBranding })}`,
-            '\n_Contact the shop or continue checkout to order._'
+            '\n_Contact the shop to place your order._'
         ].filter(Boolean).join('\n');
 
         await sendTextMessage(from, parts);
+        await sendButtons(from, '⚡ What\'s next?', [
+            { id: `@${variant.product.merchant.handle}`, title: '↩️ Back to Shop' },
+            { id: 'c_discover', title: '🏠 Discover' }
+        ]);
         return;
     }
 
@@ -239,25 +250,29 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
         ]);
 
         if (total === 0) {
-            await sendTextMessage(from, '🔍 No active shops found at the moment.');
+            await sendButtons(from, '🔍 No shops are listed right now. Check back soon!', [
+                { id: 'c_find_shop', title: '🔍 Find by Handle' },
+                { id: 'c_home', title: '🏠 Home' }
+            ]);
             return;
         }
 
         const totalPages = Math.ceil(total / PAGE_SIZE);
 
-        let msg = `🪪 *Available Shops* (Page ${page}/${totalPages}):\n\n`;
+        let msg = `🔥 *Browse Shops* (${page}/${totalPages})\n\n`;
         merchants.forEach((m: any) => {
             msg += `• *@${m.handle}* — ${m.trading_name}\n`;
         });
-        msg += '\nType the *@handle* to open a shop.';
+        msg += '\n_Tap a handle above or use the buttons below._';
 
         await sendTextMessage(from, msg);
 
-        // Pagination buttons
+        // Pagination + home buttons
         const navBtns: Array<{ id: string; title: string }> = [];
         if (page > 1) navBtns.push({ id: `browse_shops_p${page - 1}`, title: `◀ Prev (${page - 1}|${totalPages})` });
         if (page < totalPages) navBtns.push({ id: `browse_shops_p${page + 1}`, title: `Next (${page + 1}|${totalPages}) ▶` });
-        if (navBtns.length > 0) await sendButtons(from, 'Navigate pages:', navBtns);
+        navBtns.push({ id: 'c_home', title: '🏠 Home' });
+        await sendButtons(from, 'Navigate:', navBtns.slice(0, 3));
         return;
     }
 

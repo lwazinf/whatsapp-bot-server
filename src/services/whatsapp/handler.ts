@@ -78,13 +78,13 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
         // Switch mode selections
         if (input === 'sw_customer') {
             await db.userSession.update({ where: { wa_id: from }, data: { mode: 'CUSTOMER', active_merchant_id: null } });
-            await sendTextMessage(from, '👤 Switched to *Customer* mode.');
+            await sendCustomerWelcome(from);
             return;
         }
 
         if (input === 'sw_admin') {
             await db.userSession.update({ where: { wa_id: from }, data: { mode: 'CUSTOMER', active_merchant_id: null } });
-            await sendTextMessage(from, '🛡️ Switched to *Platform Admin* mode. Type *admin* to open the panel.');
+            await sendTextMessage(from, '🛡️ *Platform Admin* mode. Type *admin* to open the panel.');
             return;
         }
 
@@ -97,7 +97,7 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
                 return;
             }
             await db.userSession.update({ where: { wa_id: from }, data: { mode: 'MERCHANT', active_merchant_id: merchantId } });
-            await sendTextMessage(from, `🏪 Switched to *${targetMerchant.trading_name}*. Type *menu* for dashboard.`);
+            await sendTextMessage(from, `🏪 Switched to *${targetMerchant.trading_name}*. Type *menu* to open the dashboard.`);
             return;
         }
 
@@ -191,6 +191,52 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
             return;
         }
 
+        // Customer nav screens
+        if (input === 'c_discover') {
+            await sendButtons(from,
+                '🛍️ *Discover Shops*\n\nFind something amazing today! 🔥',
+                [
+                    { id: 'browse_shops', title: '🛒 Browse All Shops' },
+                    { id: 'c_find_shop', title: '🔍 Find by Handle' }
+                ]
+            );
+            return;
+        }
+
+        if (input === 'c_account') {
+            await sendButtons(from,
+                '👤 *My Account*\n\nManage your orders and settings.',
+                [
+                    { id: 'c_my_orders', title: '📦 My Orders' },
+                    { id: 'c_settings', title: '⚙️ Help & Settings' }
+                ]
+            );
+            return;
+        }
+
+        if (input === 'c_find_shop') {
+            await sendTextMessage(from,
+                '🔍 *Find a Shop*\n\nType the shop handle to open it directly.\n\nExample: *@shopname*\n\n_Tip: Ask the shop for their handle!_'
+            );
+            return;
+        }
+
+        if (input === 'c_settings') {
+            await sendButtons(from,
+                '⚙️ *Settings & Help*',
+                [
+                    { id: 'helpomeru', title: '❓ Commands & Help' },
+                    { id: 'c_home', title: '🏠 Home' }
+                ]
+            );
+            return;
+        }
+
+        if (input === 'c_home' || normalizedInput === 'hi' || normalizedInput === 'hello' || normalizedInput === 'hey' || normalizedInput === 'start') {
+            await sendCustomerWelcome(from);
+            return;
+        }
+
         // Customer Discovery & Orders
         if (input.startsWith('@') || input === 'browse_shops' || input.startsWith('browse_shops_p') || input.startsWith('cat_') || input.startsWith('prod_') || input.startsWith('variant_')) {
             await handleCustomerDiscovery(from, input);
@@ -223,15 +269,25 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
         }
 
         // Default: Welcome Menu
-        await sendButtons(from, '👋 Welcome to *Omeru*!\n\nWhat would you like to do?', [
-            { id: 'browse_shops', title: '🪪 Browse Shops' },
-            { id: 'c_my_orders', title: '📦 My Orders' }
-        ]);
+        await sendCustomerWelcome(from);
 
     } catch (err: any) {
         console.error('❌ Handler Error:', err.message);
         await sendTextMessage(from, '⚠️ Something went wrong on our end. Please try again in a moment.');
     }
+};
+
+// ============ CUSTOMER WELCOME ============
+
+const sendCustomerWelcome = async (from: string): Promise<void> => {
+    await sendButtons(
+        from,
+        '🔥 Welcome to *Omeru*! Shop smarter, right here on WhatsApp.\n\n_What are you looking for?_',
+        [
+            { id: 'c_discover', title: '🛍️ Discover Shops' },
+            { id: 'c_account', title: '📦 My Account' }
+        ]
+    );
 };
 
 // ============ SWITCH MODE ============

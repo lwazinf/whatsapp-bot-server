@@ -35,8 +35,8 @@ export const formatCurrency = (amount: number, context: BrandingContext): string
 
 export const buildMerchantWelcome = (merchant: Merchant, platform?: PlatformBranding | null): string => {
     const platformName = platform?.name || 'Omeru';
-    const intro = merchant.welcome_message || merchant.description || 'Browse our menu below.';
-    return `👋 Welcome to *${merchant.trading_name}* on ${platformName}!\n\n${intro}`;
+    const intro = merchant.welcome_message || merchant.description || '🔥 Check out what\'s available!';
+    return `🛍️ *${merchant.trading_name}*\n_on ${platformName}_\n\n${intro}`;
 };
 
 export const buildOptOutFooter = (merchant: Merchant, merchantBranding?: MerchantBranding | null): string => {
