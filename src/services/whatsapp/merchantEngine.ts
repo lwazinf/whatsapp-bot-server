@@ -34,7 +34,8 @@ const INVENTORY_PREFIXES = [
     'arch_',
     'prod_edit_',
     'prod_clear_img_',
-    'cancel_prod_img'
+    'cancel_prod_img',
+    'p_view_all_p'
 ];
 const KITCHEN_PREFIXES = ['m_kitchen', 'k_', 'ready_', 'collected_', 'view_kitchen_'];
 const SETTINGS_PREFIXES = ['m_settings', 's_', 'h_', 'm_edit_hours', 'ob_hours', 's_browse_toggle', 's_welcome_img', 's_clear_welcome_img'];

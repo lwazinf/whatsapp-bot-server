@@ -102,7 +102,11 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
         }
 
         // Platform Admin Actions
-        if (isPlatformAdmin(from) && (input === 'admin' || input.startsWith('pa_') || session.active_prod_id?.startsWith('PA_'))) {
+        if (isPlatformAdmin(from) && (
+            input === 'admin' ||
+            input.startsWith('pa_') ||
+            session.active_prod_id?.startsWith('PA_')
+        )) {
             await handlePlatformAdminActions(from, input);
             return;
         }
@@ -188,7 +192,7 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
         }
 
         // Customer Discovery & Orders
-        if (input.startsWith('@') || input === 'browse_shops' || input.startsWith('cat_') || input.startsWith('prod_') || input.startsWith('variant_')) {
+        if (input.startsWith('@') || input === 'browse_shops' || input.startsWith('browse_shops_p') || input.startsWith('cat_') || input.startsWith('prod_') || input.startsWith('variant_')) {
             await handleCustomerDiscovery(from, input);
             return;
         }

@@ -140,18 +140,21 @@ export const sendListMessage = async (
 };
 
 /**
- * Sends an image via URL
+ * Sends an image — auto-detects URL vs 360Dialog media ID.
+ * Images uploaded through the bot are stored as media IDs (not URLs).
+ * Images on R2/CDN are full https:// URLs.
  */
-export const sendImageMessage = async (to: string, imageUrl: string, caption?: string): Promise<boolean> => {
+export const sendImageMessage = async (to: string, imageUrlOrId: string, caption?: string): Promise<boolean> => {
+    const isUrl = imageUrlOrId.startsWith('http://') || imageUrlOrId.startsWith('https://');
+    const imagePayload = isUrl
+        ? { link: imageUrlOrId, ...(caption ? { caption } : {}) }
+        : { id: imageUrlOrId, ...(caption ? { caption } : {}) };
     return sendMessage({
         messaging_product: 'whatsapp',
         recipient_type: 'individual',
         to: formatPhoneNumber(to),
         type: 'image',
-        image: {
-            link: imageUrl,
-            caption: caption
-        }
+        image: imagePayload
     });
 };
 

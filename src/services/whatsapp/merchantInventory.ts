@@ -1,5 +1,5 @@
 import { Prisma, Merchant, UserSession } from '@prisma/client';
-import { sendTextMessage, sendButtons, sendListMessage } from './sender';
+import { sendTextMessage, sendButtons, sendListMessage, sendImageMessage } from './sender';
 import { formatCurrency } from './messageTemplates';
 import { getPlatformBranding } from './platformBranding';
 import { db } from '../../lib/db';
@@ -123,28 +123,49 @@ export const handleInventoryActions = async (
             return;
         }
 
-        // View all products
-        if (input === 'p_view_all') {
-            const products = await db.product.findMany({ 
-                where: { merchant_id: merchant.id, status: 'ACTIVE' },
-                orderBy: { name: 'asc' },
-                take: 10
-            });
-            
-            if (products.length === 0) {
+        // View all products (paginated)
+        if (input === 'p_view_all' || input.startsWith('p_view_all_p')) {
+            const PAGE = 8;
+            const page = input === 'p_view_all' ? 1 : (parseInt(input.replace('p_view_all_p', ''), 10) || 1);
+            const skip = (page - 1) * PAGE;
+
+            const [products, total] = await Promise.all([
+                db.product.findMany({
+                    where: { merchant_id: merchant.id, status: 'ACTIVE' },
+                    orderBy: { name: 'asc' },
+                    take: PAGE,
+                    skip
+                }),
+                db.product.count({ where: { merchant_id: merchant.id, status: 'ACTIVE' } })
+            ]);
+
+            if (total === 0) {
                 await sendTextMessage(from, '📭 Your menu is empty. Add your first item!');
                 await handleInventoryActions(from, 'm_inventory', session, merchant);
                 return;
             }
 
-            const rows = products.map(p => ({
+            const totalPages = Math.ceil(total / PAGE);
+            const rows = products.map((p: any) => ({
                 id: `edit_prod_${p.id}`,
                 title: p.name.substring(0, 24),
                 description: `${formatCurrency(p.price, { merchant, merchantBranding, platform: platformBranding })} • ${p.is_in_stock ? '🟢' : '🔴'}`
             }));
 
-            await sendListMessage(from, `📦 *Your Menu* (${products.length} items)`, '📋 View Items', [{ title: 'Products', rows }]);
-            await sendButtons(from, 'Actions:', [{ id: 'm_add_prod', title: '➕ Add Item' }, { id: 'p_back', title: '⬅️ Back' }]);
+            await sendListMessage(
+                from,
+                `📦 *Your Menu* (${total} items${totalPages > 1 ? ` • Page ${page}/${totalPages}` : ''})`,
+                '📋 View Items',
+                [{ title: 'Products', rows }]
+            );
+
+            const actionBtns: Array<{ id: string; title: string }> = [{ id: 'm_add_prod', title: '➕ Add Item' }];
+            if (page > 1) actionBtns.push({ id: `p_view_all_p${page - 1}`, title: `◀ Prev (${page - 1}|${totalPages})` });
+            if (page < totalPages) actionBtns.push({ id: `p_view_all_p${page + 1}`, title: `Next (${page + 1}|${totalPages}) ▶` });
+            await sendButtons(from, 'Actions:', actionBtns.slice(0, 3));
+            if (!actionBtns.some(b => b.id === 'p_back')) {
+                await sendButtons(from, 'Nav:', [{ id: 'p_back', title: '⬅️ Back' }]);
+            }
             return;
         }
 
@@ -153,6 +174,11 @@ export const handleInventoryActions = async (
             const pid = input.replace('edit_prod_', '');
             const p = await db.product.findUnique({ where: { id: pid }, include: { category: true } });
             if (!p) { await sendTextMessage(from, '❌ Product not found.'); return; }
+
+            // Show product image if available
+            if (p.image_url) {
+                await sendImageMessage(from, p.image_url, p.name);
+            }
 
             const details = [
                 `📦 *${p.name}*`,
