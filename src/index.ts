@@ -12,6 +12,7 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 
 app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true }));
 
 /**
  * Health Check for Railway
@@ -73,6 +74,8 @@ app.post('/api/whatsapp/webhook', async (req: Request, res: Response) => {
 
 // ── Static payment result pages ────────────────────────────────────────────
 
+const waLink = `https://wa.me/${process.env.WHATSAPP_PHONE_NUMBER || '27750656348'}`;
+
 const paymentPage = (title: string, message: string, color: string): string => `
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -83,13 +86,14 @@ const paymentPage = (title: string, message: string, color: string): string => `
   .icon{font-size:56px;margin-bottom:16px}
   h1{margin:0 0 12px;color:${color};font-size:22px}
   p{margin:0 0 24px;color:#555;line-height:1.5}
-  .brand{color:#888;font-size:13px;margin-top:24px}
+  .btn{display:inline-block;background:#25D366;color:#fff;text-decoration:none;padding:14px 28px;border-radius:50px;font-size:16px;font-weight:600;margin-bottom:24px}
+  .brand{color:#888;font-size:13px;margin-top:8px}
 </style></head><body>
 <div class="card">
   <div class="icon">${color === 'green' ? '✅' : color === 'orange' ? '❌' : '⚠️'}</div>
   <h1>${title}</h1>
   <p>${message}</p>
-  <p><strong>Return to WhatsApp</strong> to continue.</p>
+  <a class="btn" href="${waLink}">💬 Return to Omeru</a>
   <div class="brand">Omeru — Shop smarter on WhatsApp</div>
 </div></body></html>`;
 
@@ -111,9 +115,16 @@ app.post('/webhook/ozow', async (req: Request, res: Response) => {
     try {
         const body = req.body as Record<string, string>;
 
-        if (!verifyWebhookHash(body)) {
-            console.warn('❌ Ozow webhook: hash mismatch — ignoring');
-            return;
+        console.log('📦 Ozow webhook raw body:', JSON.stringify(body));
+
+        const hashOk = verifyWebhookHash(body);
+        if (!hashOk) {
+            if (process.env.OZOW_SKIP_HASH_VERIFY === 'true') {
+                console.warn('⚠️ Ozow webhook: hash mismatch — processing anyway (OZOW_SKIP_HASH_VERIFY=true)');
+            } else {
+                console.warn('❌ Ozow webhook: hash mismatch — ignoring');
+                return;
+            }
         }
 
         const transactionRef = body.TransactionReference;
