@@ -5,8 +5,8 @@ import { handleCustomerDiscovery } from './customerDiscovery';
 import { handleCustomerOrders } from './customerOrders';
 import { handlePlatformAdminActions } from './platformAdmin';
 import { handleHelpCommand } from './helpEngine';
-import { sendTextMessage, sendButtons, sendListMessage } from './sender';
-import { getPlatformSettings } from './platformBranding';
+import { sendTextMessage, sendButtons, sendListMessage, sendImageMessage } from './sender';
+import { getPlatformSettings, getPlatformBranding } from './platformBranding';
 import { createPaymentRequest } from '../payments/ozow';
 import { db } from '../../lib/db';
 
@@ -85,7 +85,8 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
 
         if (input === 'sw_admin') {
             await db.userSession.update({ where: { wa_id: from }, data: { mode: 'CUSTOMER', active_merchant_id: null } });
-            await sendTextMessage(from, '🛡️ *Platform Admin* mode. Type *admin* to open the panel.');
+            // Immediately show admin panel — no waiting for 'admin' command
+            await handlePlatformAdminActions(from, 'admin');
             return;
         }
 
@@ -97,8 +98,12 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
                 await sendTextMessage(from, '⛔ Store not found or access denied.');
                 return;
             }
-            await db.userSession.update({ where: { wa_id: from }, data: { mode: 'MERCHANT', active_merchant_id: merchantId } });
-            await sendTextMessage(from, `🏪 Switched to *${targetMerchant.trading_name}*. Type *menu* to open the dashboard.`);
+            const updatedSession = await db.userSession.update({
+                where: { wa_id: from },
+                data: { mode: 'MERCHANT', active_merchant_id: merchantId }
+            });
+            // Immediately show merchant dashboard — no waiting for 'menu' command
+            await handleMerchantAction(from, 'menu', updatedSession, targetMerchant, message);
             return;
         }
 
@@ -194,13 +199,8 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
 
         // Customer nav screens
         if (input === 'c_discover') {
-            await sendButtons(from,
-                '🛍️ *Discover Shops*\n\nFind something amazing today! 🔥',
-                [
-                    { id: 'browse_shops', title: '🛒 Browse All Shops' },
-                    { id: 'c_find_shop', title: '🔍 Find by Handle' }
-                ]
-            );
+            // Redirect directly to browse stores (category selection)
+            await handleCustomerDiscovery(from, 'browse_shops');
             return;
         }
 
@@ -243,9 +243,13 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
         if (
             input.startsWith('@') ||
             input === 'browse_shops' || input.startsWith('browse_shops_p') ||
+            input.startsWith('bcat_') ||
+            input.startsWith('sp_') ||
+            input.startsWith('vpick_') ||
             input.startsWith('cat_') ||
             input.startsWith('prod_') || input.startsWith('variant_') ||
             input.startsWith('add_cart_') || input.startsWith('replace_cart_') ||
+            input.startsWith('buy_now_prod_') || input.startsWith('buy_now_variant_') ||
             input === 'c_cart' || input === 'cart_clear' || input === 'cart_checkout' || input === 'cart_confirm_order' ||
             input.startsWith('wish_prod_') || input === 'c_wishlist'
         ) {
@@ -253,7 +257,7 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
             return;
         }
 
-        if (input === 'c_my_orders' || input.startsWith('view_order_')) {
+        if (input === 'c_my_orders' || input.startsWith('view_order_') || input.startsWith('delete_order_') || input.startsWith('pay_stale_')) {
             await handleCustomerOrders(from, input);
             return;
         }
@@ -329,26 +333,60 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
 // ============ CUSTOMER WELCOME ============
 
 const sendCustomerWelcome = async (from: string): Promise<void> => {
-    // Check for active cart
-    const session = await db.userSession.findUnique({ where: { wa_id: from }, select: { cart_json: true } });
-    let cartHint = '';
+    const session = await db.userSession.findUnique({
+        where: { wa_id: from },
+        select: { cart_json: true, has_seen_onboarding: true }
+    });
+
+    const platformBranding = await getPlatformBranding(db);
+    const platformName = platformBranding?.name || 'Omeru';
+
+    // ── First visit: send full Omeru onboarding intro ─────────────────────────
+    if (session && !session.has_seen_onboarding) {
+        await db.userSession.update({ where: { wa_id: from }, data: { has_seen_onboarding: true } });
+
+        const introText = [
+            `👋 Welcome to *${platformName}*!`,
+            ``,
+            `Shop smarter, right here on WhatsApp — no apps needed.`,
+            ``,
+            `Here's what you can do:`,
+            `🛍️ Browse stores & discover products`,
+            `🛒 Add to cart & checkout in seconds`,
+            `❤️ Save items to your wishlist`,
+            `📦 Track your orders anytime`
+        ].join('\n');
+
+        if (platformBranding?.logo_url) {
+            await sendImageMessage(from, platformBranding.logo_url, `Welcome to ${platformName}!`);
+        }
+
+        await sendButtons(from, introText, [
+            { id: 'browse_shops', title: '🛍️ Browse Stores' },
+            { id: 'c_account', title: '👤 My Account' }
+        ]);
+        return;
+    }
+
+    // ── Returning user ────────────────────────────────────────────────────────
+    let cartCount = 0;
     try {
         if (session?.cart_json) {
             const cart = JSON.parse(session.cart_json);
-            const count = cart.items?.reduce((s: number, i: any) => s + i.qty, 0) || 0;
-            if (count > 0) cartHint = `\n🛒 You have ${count} item${count !== 1 ? 's' : ''} in your cart!`;
+            cartCount = cart.items?.reduce((s: number, i: any) => s + i.qty, 0) || 0;
         }
     } catch { /* ignore */ }
 
     const buttons: Array<{ id: string; title: string }> = [
-        { id: 'c_discover', title: '🛍️ Discover Shops' },
-        { id: 'c_account', title: '📦 My Account' }
+        { id: 'browse_shops', title: '🛍️ Browse Stores' },
+        { id: 'c_account', title: '👤 My Account' }
     ];
-    if (cartHint) buttons.splice(1, 0, { id: 'c_cart', title: '🛒 My Cart' });
+    if (cartCount > 0) buttons.splice(1, 0, { id: 'c_cart', title: `🛒 Cart (${cartCount})` });
 
+    const cartHint = cartCount > 0 ? `\n🛒 ${cartCount} item${cartCount !== 1 ? 's' : ''} in your cart` : '';
     await sendButtons(
         from,
-        `🔥 Welcome to *Omeru*! Shop smarter, right here on WhatsApp.${cartHint}\n\n_What are you looking for?_`,
+        `🔥 *${platformName}* — Shop on WhatsApp!${cartHint}\n\nWhat are you looking for?`,
         buttons.slice(0, 3)
     );
 };

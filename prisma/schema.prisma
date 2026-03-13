@@ -35,16 +35,17 @@ enum InviteStatus {
 }
 
 model UserSession {
-  id                 String   @id @default(cuid())
-  wa_id              String   @unique
-  mode               String   @default("CUSTOMER")
-  state              String?
-  active_prod_id     String?
-  last_merchant_id   String?
-  active_merchant_id String?
-  cart_json          String?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id                  String   @id @default(cuid())
+  wa_id               String   @unique
+  mode                String   @default("CUSTOMER")
+  state               String?
+  active_prod_id      String?
+  last_merchant_id    String?
+  active_merchant_id  String?
+  cart_json           String?
+  has_seen_onboarding Boolean  @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 }
 
 model Merchant {
@@ -75,6 +76,7 @@ model Merchant {
   accepted_terms    Boolean        @default(false)
   show_in_browse    Boolean        @default(true)
   welcome_image_url String?
+  store_category    String?
   status            MerchantStatus @default(ACTIVE)
   categories        Category[]
   products          Product[]
@@ -125,6 +127,7 @@ model MerchantCustomer {
   display_name        String?
   last_interaction_at DateTime @default(now())
   opt_out             Boolean  @default(false)
+  has_seen_welcome    Boolean  @default(false)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
@@ -210,9 +213,10 @@ model Order {
   total         Float
   items_summary String?
   status        OrderStatus @default(PENDING)
-  alert_count   Int         @default(0)
-  payment_ref   String?
-  payment_url   String?
+  alert_count          Int       @default(0)
+  customer_alerted_at  DateTime?
+  payment_ref          String?
+  payment_url          String?
   order_items   OrderItem[]
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt

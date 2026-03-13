@@ -140,6 +140,40 @@ export const sendListMessage = async (
 };
 
 /**
+ * Sends an interactive message with an image header + reply buttons (max 3).
+ * Used for product cards in the customer-facing store view.
+ */
+export const sendInteractiveImageButtons = async (
+    to: string,
+    imageUrlOrId: string,
+    bodyText: string,
+    buttons: Array<{ id: string; title: string }>,
+    footer?: string
+): Promise<boolean> => {
+    const isUrl = imageUrlOrId.startsWith('http://') || imageUrlOrId.startsWith('https://');
+    const imagePayload = isUrl ? { link: imageUrlOrId } : { id: imageUrlOrId };
+    const payload: any = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: formatPhoneNumber(to),
+        type: 'interactive',
+        interactive: {
+            type: 'button',
+            header: { type: 'image', image: imagePayload },
+            body: { text: bodyText.substring(0, 1024) },
+            action: {
+                buttons: buttons.slice(0, 3).map(btn => ({
+                    type: 'reply',
+                    reply: { id: btn.id, title: btn.title.substring(0, 20) }
+                }))
+            }
+        }
+    };
+    if (footer) payload.interactive.footer = { text: footer.substring(0, 60) };
+    return sendMessage(payload);
+};
+
+/**
  * Sends an image — auto-detects URL vs 360Dialog media ID.
  * Images uploaded through the bot are stored as media IDs (not URLs).
  * Images on R2/CDN are full https:// URLs.
