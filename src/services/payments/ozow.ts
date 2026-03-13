@@ -32,7 +32,10 @@ export const createPaymentRequest = async (params: {
     const bankRef        = params.merchantName.substring(0, 20);
     const amount         = params.amount.toFixed(2);
 
-    // Hash: concat ordered fields + private key → lowercase → SHA-512
+    // Hash field order (verified against live API — matches original needtofuel implementation):
+    // SiteCode + CountryCode + CurrencyCode + Amount + TransactionReference +
+    // BankReference + CancelUrl + ErrorUrl + SuccessUrl + NotifyUrl + IsTest
+    // → append PrivateKey → lowercase entire string → SHA-512
     const orderedValues = [
         SITE_CODE, 'ZA', 'ZAR', amount,
         transactionRef, bankRef,
