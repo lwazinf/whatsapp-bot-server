@@ -1,6 +1,7 @@
 import { Prisma, Merchant, MerchantOwnerRole, UserSession } from '@prisma/client';
-import { sendTextMessage, sendButtons } from './sender';
+import { sendTextMessage, sendButtons, sendListMessage } from './sender';
 import { logInviteAdded, logInviteRevoked } from './adminEngine';
+import { STORE_CATEGORIES } from './customerDiscovery';
 import { db } from '../../lib/db';
 
 const logAudit = async ({
@@ -40,7 +41,9 @@ const STATE = {
     SUPPORT_NUMBER: 'SET_SUPPORT_NUMBER',
     WELCOME_MESSAGE: 'SET_WELCOME_MESSAGE',
     OWNER_INVITE: 'SET_OWNER_INVITE',
-    OWNER_REMOVE: 'SET_OWNER_REMOVE'
+    OWNER_REMOVE: 'SET_OWNER_REMOVE',
+    HANDLE: 'SET_HANDLE',
+    ADMIN_HANDLE: 'SET_ADMIN_HANDLE'
 };
 
 export const handleSettingsActions = async (
@@ -96,7 +99,12 @@ export const handleSettingsActions = async (
                 { id: 's_welcome_img', title: '🖼️ Welcome Image' }
             ]);
             await sendButtons(from, 'More:', [
-                { id: 's_owners', title: '👥 Owners' },
+                { id: 's_handle', title: '🔗 Store Handle' },
+                { id: 's_admin_handle', title: '🔐 Admin Handle' },
+                { id: 's_owners', title: '👥 Owners' }
+            ]);
+            await sendButtons(from, 'More:', [
+                { id: 's_category', title: '🏷️ Store Category' },
                 { id: 's_back', title: '⬅️ Back' }
             ]);
             return;
@@ -388,6 +396,125 @@ export const handleSettingsActions = async (
                 return;
             }
             await sendButtons(from, '⚠️ Send an image or cancel.', [{ id: 's_cancel', title: '❌ Cancel' }]);
+            return;
+        }
+
+        // Store Handle change
+        if (input === 's_handle') {
+            await setState(from, STATE.HANDLE);
+            await sendTextMessage(from,
+                `🔗 *Store Handle*\n\nCurrent: @${merchant.handle}\n\nEnter new handle (3–20 chars, a–z 0–9 _ only).\nOr type "cancel" to abort:`
+            );
+            return;
+        }
+
+        if (state === STATE.HANDLE) {
+            if (input.toLowerCase() === 'cancel') {
+                await clearState(from);
+                await handleSettingsActions(from, 's_profile', session, merchant);
+                return;
+            }
+            const newHandle = input.trim().toLowerCase();
+            if (!/^[a-z0-9_]{3,20}$/.test(newHandle)) {
+                await sendTextMessage(from, '⚠️ Handle must be 3–20 characters, using only a–z, 0–9, and _.\n\nTry again or type "cancel":');
+                return;
+            }
+            const existingHandle = await db.merchant.findFirst({ where: { handle: newHandle, NOT: { id: merchant.id } } });
+            if (existingHandle) {
+                await sendTextMessage(from, `⚠️ @${newHandle} is already in use. Try a different handle:`);
+                return;
+            }
+            await db.merchant.update({ where: { id: merchant.id }, data: { handle: newHandle } });
+            await logAudit({
+                actorWaId: from,
+                action: 'MERCHANT_HANDLE_UPDATED',
+                entityType: 'MERCHANT',
+                entityId: merchant.id,
+                metadata: { handle: newHandle }
+            });
+            await clearState(from);
+            await sendTextMessage(from, `✅ Handle updated to *@${newHandle}*!`);
+            const updatedMerchant = await db.merchant.findUnique({ where: { id: merchant.id } });
+            await handleSettingsActions(from, 's_profile', session, updatedMerchant!);
+            return;
+        }
+
+        // Admin Handle change
+        if (input === 's_admin_handle') {
+            await setState(from, STATE.ADMIN_HANDLE);
+            await sendTextMessage(from,
+                `🔐 *Admin Handle*\n\nCurrent: @${merchant.admin_handle || 'not set'}\n\nEnter new admin handle (4–30 chars, a–z 0–9 _ only).\nOr type "cancel" to abort:`
+            );
+            return;
+        }
+
+        if (state === STATE.ADMIN_HANDLE) {
+            if (input.toLowerCase() === 'cancel') {
+                await clearState(from);
+                await handleSettingsActions(from, 's_profile', session, merchant);
+                return;
+            }
+            const newAdminHandle = input.trim().toLowerCase();
+            if (!/^[a-z0-9_]{4,30}$/.test(newAdminHandle)) {
+                await sendTextMessage(from, '⚠️ Admin handle must be 4–30 characters, using only a–z, 0–9, and _.\n\nTry again or type "cancel":');
+                return;
+            }
+            const existingAdminHandle = await db.merchant.findFirst({ where: { admin_handle: newAdminHandle, NOT: { id: merchant.id } } });
+            if (existingAdminHandle) {
+                await sendTextMessage(from, `⚠️ @${newAdminHandle} is already in use. Try a different handle:`);
+                return;
+            }
+            await db.merchant.update({ where: { id: merchant.id }, data: { admin_handle: newAdminHandle } });
+            await logAudit({
+                actorWaId: from,
+                action: 'MERCHANT_ADMIN_HANDLE_UPDATED',
+                entityType: 'MERCHANT',
+                entityId: merchant.id,
+                metadata: { admin_handle: newAdminHandle }
+            });
+            await clearState(from);
+            await sendTextMessage(from, `✅ Admin handle updated to *@${newAdminHandle}*!`);
+            const updatedMerchant = await db.merchant.findUnique({ where: { id: merchant.id } });
+            await handleSettingsActions(from, 's_profile', session, updatedMerchant!);
+            return;
+        }
+
+        // Store Category
+        if (input === 's_category') {
+            const currentCat = (merchant as any).store_category as string | null;
+            const currentLabel = currentCat
+                ? (STORE_CATEGORIES.find(c => c.slug === currentCat)?.label ?? currentCat)
+                : 'Not set';
+            const rows = STORE_CATEGORIES.map(c => ({
+                id: `mcat_${c.slug}`,
+                title: `${c.emoji} ${c.label}`,
+                description: currentCat === c.slug ? '✅ Current' : ''
+            }));
+            await sendListMessage(from,
+                `🏷️ *Store Category*\n\nCurrent: ${currentLabel}\n\nChoose a category for your store:`,
+                '🏷️ Select',
+                [{ title: 'Categories', rows }]
+            );
+            return;
+        }
+
+        if (input.startsWith('mcat_')) {
+            const slug = input.replace('mcat_', '');
+            const cat = STORE_CATEGORIES.find(c => c.slug === slug);
+            if (!cat) {
+                await sendTextMessage(from, '❌ Invalid category.');
+                return;
+            }
+            await db.merchant.update({ where: { id: merchant.id }, data: { store_category: slug } as any });
+            await logAudit({
+                actorWaId: from,
+                action: 'MERCHANT_CATEGORY_UPDATED',
+                entityType: 'MERCHANT',
+                entityId: merchant.id,
+                metadata: { store_category: slug }
+            });
+            await sendTextMessage(from, `✅ Store category set to *${cat.emoji} ${cat.label}*!`);
+            await handleSettingsActions(from, 's_profile', session, merchant);
             return;
         }
 

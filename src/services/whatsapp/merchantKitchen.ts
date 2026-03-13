@@ -84,8 +84,63 @@ export const handleKitchenActions = async (
 
             await sendButtons(from, msg, [
                 { id: `ready_${order.id}`, title: '✅ Mark Ready' },
+                { id: `cancel_order_${order.id}`, title: '❌ Cancel Order' },
                 { id: 'k_new', title: '⬅️ Back' }
             ]);
+            return;
+        }
+
+        // Cancel order — confirmation prompt
+        if (input.startsWith('cancel_order_')) {
+            const oid = input.replace('cancel_order_', '');
+            const order = await db.order.findUnique({ where: { id: oid } });
+
+            if (!order || order.merchant_id !== merchant.id) {
+                await sendTextMessage(from, '❌ Order not found.');
+                return;
+            }
+            if (order.status === 'CANCELLED' || order.status === 'COMPLETED') {
+                await sendTextMessage(from, `⚠️ Order #${order.id.slice(-5)} is already ${order.status.toLowerCase()}.`);
+                return;
+            }
+
+            await sendButtons(from,
+                `❌ *Cancel Order #${order.id.slice(-5)}?*\n\nThe customer will be notified. This cannot be undone.`,
+                [
+                    { id: `confirm_cancel_${order.id}`, title: '✅ Yes, Cancel' },
+                    { id: `abort_cancel_${order.id}`, title: '↩️ No, Go Back' }
+                ]
+            );
+            return;
+        }
+
+        // Abort cancellation — return to order detail
+        if (input.startsWith('abort_cancel_')) {
+            const oid = input.replace('abort_cancel_', '');
+            await handleKitchenActions(from, `k_view_${oid}`, session, merchant);
+            return;
+        }
+
+        // Confirm cancellation
+        if (input.startsWith('confirm_cancel_')) {
+            const oid = input.replace('confirm_cancel_', '');
+            const order = await db.order.findUnique({ where: { id: oid } });
+
+            if (!order || order.merchant_id !== merchant.id) {
+                await sendTextMessage(from, '❌ Order not found.');
+                return;
+            }
+
+            await db.order.update({ where: { id: oid }, data: { status: OrderStatus.CANCELLED } });
+
+            // Notify customer
+            await sendTextMessage(
+                order.customer_id,
+                `❌ *Order #${order.id.slice(-5)} Cancelled*\n\nYour order from *${merchant.trading_name}* has been cancelled.\n\nContact the shop if this is an error.`
+            );
+
+            await sendTextMessage(from, `✅ Order #${order.id.slice(-5)} cancelled. Customer notified.`);
+            await handleKitchenActions(from, 'k_new', session, merchant);
             return;
         }
 

@@ -9,6 +9,7 @@ import { sendTextMessage, sendButtons, sendListMessage, sendImageMessage } from 
 import { getPlatformSettings, getPlatformBranding } from './platformBranding';
 import { createPaymentRequest } from '../payments/ozow';
 import { db } from '../../lib/db';
+import { handleAddressActions } from './customerAddress';
 
 /**
  * Main entry point for all incoming WhatsApp messages
@@ -210,9 +211,12 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
                 [
                     { id: 'c_my_orders', title: '📦 My Orders' },
                     { id: 'c_wishlist', title: '❤️ Wishlist' },
-                    { id: 'c_settings', title: '⚙️ Settings & Help' }
+                    { id: 'c_address', title: '📍 My Address' }
                 ]
             );
+            await sendButtons(from, 'More:', [
+                { id: 'c_settings', title: '⚙️ Settings & Help' }
+            ]);
             return;
         }
 
@@ -239,6 +243,29 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
             return;
         }
 
+        // Address management
+        if (input === 'c_address' || input === 'addr_change' || input === 'addr_manual'
+            || input.startsWith('addr_pick_') || input === 'cart_addr') {
+            await handleAddressActions(from, input, message);
+            return;
+        }
+
+        // ADDR_FLOW active state
+        if (session.active_prod_id === 'ADDR_FLOW') {
+            if (message.type === 'location') {
+                await handleAddressActions(from, '', message);
+                return;
+            }
+            // Escape buttons: clear state and fall through to normal routing
+            if (input === 'c_account' || input === 'c_home' || input === 'browse_shops') {
+                await db.userSession.update({ where: { wa_id: from }, data: { active_prod_id: null, state: null } });
+                // falls through to normal routing below
+            } else {
+                await handleAddressActions(from, input, message);
+                return;
+            }
+        }
+
         // Customer Discovery, Cart & Wishlist
         if (
             input.startsWith('@') ||
@@ -251,8 +278,15 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
             input.startsWith('add_cart_') || input.startsWith('replace_cart_') ||
             input.startsWith('buy_now_prod_') || input.startsWith('buy_now_variant_') ||
             input === 'c_cart' || input === 'cart_clear' || input === 'cart_checkout' || input === 'cart_confirm_order' ||
+            input === 'cart_edit_qty' || input.startsWith('cedit_') ||
             input.startsWith('wish_prod_') || input === 'c_wishlist'
         ) {
+            await handleCustomerDiscovery(from, input);
+            return;
+        }
+
+        // Cart qty text input flow — intercept plain text when awaiting qty
+        if (session.active_prod_id?.startsWith('cart_qty_')) {
             await handleCustomerDiscovery(from, input);
             return;
         }

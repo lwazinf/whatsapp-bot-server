@@ -44,6 +44,7 @@ model UserSession {
   active_merchant_id  String?
   cart_json           String?
   has_seen_onboarding Boolean  @default(false)
+  delivery_address    String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 }

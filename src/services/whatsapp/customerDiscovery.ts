@@ -4,12 +4,13 @@ import { getPlatformBranding } from './platformBranding';
 import { setCustomerLastMerchant, upsertMerchantCustomer } from './merchantCustomers';
 import { createPaymentRequest } from '../payments/ozow';
 import { db } from '../../lib/db';
+import { getCustomerAddress } from './customerAddress';
 
 const STORE_PROD_PAGE_SIZE = 3;
 const BROWSE_PAGE_SIZE = 5;
 
 // Platform-level store categories for browsing
-const STORE_CATEGORIES = [
+export const STORE_CATEGORIES = [
     { slug: 'food',     emoji: '🍔', label: 'Food & Drink' },
     { slug: 'fashion',  emoji: '👗', label: 'Fashion & Clothing' },
     { slug: 'beauty',   emoji: '💄', label: 'Beauty & Wellness' },
@@ -98,7 +99,7 @@ const sendCartView = async (from: string, cart: Cart, platformBranding: any): Pr
     await sendButtons(from, msg, [
         { id: 'cart_checkout', title: '✅ Checkout' },
         { id: `@${cart.merchant_handle}`, title: '➕ Add More' },
-        { id: 'cart_clear', title: '🗑️ Clear Cart' }
+        { id: 'cart_edit_qty', title: '✏️ Edit Qty' }
     ]);
 };
 
@@ -110,7 +111,8 @@ const processBuyNow = async (
     productId: string,
     productName: string,
     price: number,
-    platformBranding: any
+    platformBranding: any,
+    deliveryAddress?: string | null
 ): Promise<void> => {
     const merchantBranding = await db.merchantBranding.findUnique({ where: { merchant_id: merchant.id } });
 
@@ -126,9 +128,10 @@ const processBuyNow = async (
     });
 
     // Notify merchant
+    const deliveryLine = deliveryAddress ? `\n📦 Deliver to: ${deliveryAddress}` : '\n📦 Deliver to: No address provided';
     await sendTextMessage(
         merchant.wa_id,
-        `🛒 *Buy Now Order! #${order.id.slice(-5)}*\n👤 Customer: ${from}\n📦 1x ${productName}\n💰 ${formatCurrency(price, { merchant, merchantBranding, platform: platformBranding })}`
+        `🛒 *Buy Now Order! #${order.id.slice(-5)}*\n👤 Customer: ${from}\n📦 1x ${productName}\n💰 ${formatCurrency(price, { merchant, merchantBranding, platform: platformBranding })}${deliveryLine}`
     );
 
     try {
@@ -139,13 +142,14 @@ const processBuyNow = async (
         });
         await db.order.update({ where: { id: order.id }, data: { payment_ref: transactionRef, payment_url: paymentUrl } });
 
+        const addrInfo = deliveryAddress ? `\n📦 Delivering to: ${deliveryAddress}` : '';
         await sendButtons(from,
             [
                 `💳 *Pay for your order!*`,
                 ``,
                 `🏪 ${merchant.trading_name}`,
                 `📦 ${productName}`,
-                `💰 ${formatCurrency(price, { merchant, merchantBranding, platform: platformBranding })}`,
+                `💰 ${formatCurrency(price, { merchant, merchantBranding, platform: platformBranding })}${addrInfo}`,
                 ``,
                 paymentUrl
             ].join('\n'),
@@ -274,21 +278,34 @@ const sendStoreProductPage = async (from: string, merchantHandle: string, page: 
         }
     }
 
-    // Navigation
+    // Navigation — always include ← Browse
     const cart = await getCart(from);
     const count = cartItemCount(cart);
     const hasPrev = page > 1;
     const hasNext = page < totalPages;
 
+    const browseBtn = { id: 'browse_shops', title: '← Browse' };
     const navBtns: Array<{ id: string; title: string }> = [];
-    if (count > 0) navBtns.push({ id: 'c_cart', title: `🛒 Cart (${count})` });
-    if (hasPrev) navBtns.push({ id: `sp_${merchantHandle}_${page - 1}`, title: '◀ Prev' });
-    if (hasNext) navBtns.push({ id: `sp_${merchantHandle}_${page + 1}`, title: 'Next ▶' });
-    if (navBtns.length === 0) navBtns.push({ id: 'browse_shops', title: '🛍️ Browse Stores' });
 
-    // If all 3 slots taken but no "back" nav — replace last with browse if on last page
-    if (navBtns.length < 3 && !hasNext) {
-        navBtns.push({ id: 'browse_shops', title: '🛍️ Browse Stores' });
+    if (!hasPrev && !hasNext) {
+        // Single page store
+        navBtns.push(browseBtn);
+        if (count > 0) navBtns.push({ id: 'c_cart', title: `🛒 Cart (${count})` });
+    } else if (!hasPrev) {
+        // Page 1 of many
+        if (count > 0) navBtns.push({ id: 'c_cart', title: `🛒 Cart (${count})` });
+        navBtns.push(browseBtn);
+        navBtns.push({ id: `sp_${merchantHandle}_${page + 1}`, title: 'Next ▶' });
+    } else if (hasNext) {
+        // Middle page
+        navBtns.push({ id: `sp_${merchantHandle}_${page - 1}`, title: '◀ Prev' });
+        navBtns.push(browseBtn);
+        navBtns.push({ id: `sp_${merchantHandle}_${page + 1}`, title: 'Next ▶' });
+    } else {
+        // Last page
+        navBtns.push({ id: `sp_${merchantHandle}_${page - 1}`, title: '◀ Prev' });
+        navBtns.push(browseBtn);
+        if (count > 0) navBtns.push({ id: 'c_cart', title: `🛒 Cart (${count})` });
     }
 
     const navText = `📄 Page ${page} of ${totalPages}  •  ${merchant.trading_name}`;
@@ -298,14 +315,18 @@ const sendStoreProductPage = async (from: string, merchantHandle: string, page: 
 // ── Browse: category selection ────────────────────────────────────────────────
 
 const sendCategorySelection = async (from: string): Promise<void> => {
-    const catList = STORE_CATEGORIES.map(c => `${c.emoji} ${c.label}`).join('\n');
-    await sendButtons(from,
-        `🏪 *Browse Stores*\n\nChoose a category below, or type *@handle* to visit a shop directly.\n\n${catList}`,
-        [
-            { id: 'bcat_all', title: '🛒 All Stores' },
-            { id: 'bcat_food', title: '🍔 Food & Drink' },
-            { id: 'bcat_fashion', title: '👗 Fashion & Clothing' }
-        ]
+    const rows = [
+        { id: 'bcat_all', title: '🛒 All Stores', description: 'Browse every shop' },
+        ...STORE_CATEGORIES.map(c => ({
+            id: `bcat_${c.slug}`,
+            title: `${c.emoji} ${c.label}`,
+            description: ''
+        }))
+    ];
+    await sendListMessage(from,
+        '🏪 *Browse Stores*\n\nChoose a category, or type *@handle* to visit a shop directly.',
+        '🏪 Browse',
+        [{ title: 'Categories', rows }]
     );
 };
 
@@ -375,10 +396,60 @@ const sendCategoryStores = async (from: string, slug: string, page: number): Pro
     await sendButtons(from, `Browse ${categoryLabel}:`, navBtns.slice(0, 3));
 };
 
+// ── Cart qty update (text input flow) ────────────────────────────────────────
+
+const processCartQtyUpdate = async (from: string, stateKey: string, qty: number, platformBranding: any): Promise<void> => {
+    await db.userSession.update({ where: { wa_id: from }, data: { active_prod_id: null } });
+
+    const cart = await getCart(from);
+    if (!cart || cart.items.length === 0) {
+        await sendTextMessage(from, '⚠️ Your cart is empty.');
+        return;
+    }
+
+    let itemName = '';
+    if (stateKey.startsWith('cart_qty_v_')) {
+        const variantId = stateKey.replace('cart_qty_v_', '');
+        const idx = cart.items.findIndex(i => i.variant_id === variantId);
+        if (idx === -1) { await sendTextMessage(from, '❌ Item not found in cart.'); return; }
+        itemName = `${cart.items[idx].product_name}${cart.items[idx].variant_label ? ` (${cart.items[idx].variant_label})` : ''}`;
+        if (qty === 0) { cart.items.splice(idx, 1); } else { cart.items[idx].qty = qty; }
+    } else {
+        const productId = stateKey.replace('cart_qty_', '');
+        const idx = cart.items.findIndex(i => i.product_id === productId && !i.variant_id);
+        if (idx === -1) { await sendTextMessage(from, '❌ Item not found in cart.'); return; }
+        itemName = cart.items[idx].product_name;
+        if (qty === 0) { cart.items.splice(idx, 1); } else { cart.items[idx].qty = qty; }
+    }
+
+    if (cart.items.length === 0) {
+        await saveCart(from, null);
+        await sendButtons(from, `🗑️ *${itemName}* removed. Cart is now empty.`, [
+            { id: 'browse_shops', title: '🛍️ Browse Stores' }
+        ]);
+        return;
+    }
+
+    await saveCart(from, cart);
+    await sendCartView(from, cart, platformBranding);
+};
+
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 export const handleCustomerDiscovery = async (from: string, input: string): Promise<void> => {
     const platformBranding = await getPlatformBranding(db);
+
+    // ── Cart qty text input flow ───────────────────────────────────────────────
+    const sessionState = await db.userSession.findUnique({ where: { wa_id: from }, select: { active_prod_id: true } });
+    if (sessionState?.active_prod_id?.startsWith('cart_qty_')) {
+        const qty = parseInt(input.trim());
+        if (!isNaN(qty) && qty >= 0) {
+            await processCartQtyUpdate(from, sessionState.active_prod_id, qty, platformBranding);
+            return;
+        }
+        // Non-numeric — clear state and fall through to normal routing
+        await db.userSession.update({ where: { wa_id: from }, data: { active_prod_id: null } });
+    }
 
     // ── View cart ─────────────────────────────────────────────────────────────
     if (input === 'c_cart') {
@@ -401,6 +472,61 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
             { id: 'browse_shops', title: '🛍️ Browse Stores' },
             { id: 'c_home', title: '🏠 Home' }
         ]);
+        return;
+    }
+
+    // ── Edit cart quantities ───────────────────────────────────────────────────
+    if (input === 'cart_edit_qty') {
+        const cart = await getCart(from);
+        if (!cart || cart.items.length === 0) {
+            await sendButtons(from, '🛒 Your cart is empty.', [
+                { id: 'browse_shops', title: '🛍️ Browse Stores' }
+            ]);
+            return;
+        }
+        const rows = cart.items.slice(0, 8).map(item => {
+            const label = item.variant_label ? ` (${item.variant_label})` : '';
+            return {
+                id: item.variant_id ? `cedit_v_${item.variant_id}` : `cedit_${item.product_id}`,
+                title: `${item.product_name}${label}`.substring(0, 24),
+                description: `Qty: ${item.qty}`
+            };
+        });
+        rows.push({ id: 'cart_clear', title: '🗑️ Clear Entire Cart', description: 'Remove all items' });
+        await sendListMessage(from, '✏️ *Edit Cart*\n\nSelect an item to change its quantity:', '✏️ Edit', [{ title: 'Cart Items', rows }]);
+        return;
+    }
+
+    // ── Select item for qty edit ───────────────────────────────────────────────
+    if (input.startsWith('cedit_')) {
+        const cart = await getCart(from);
+        if (!cart || cart.items.length === 0) {
+            await sendTextMessage(from, '⚠️ Your cart is empty.');
+            return;
+        }
+
+        let itemName = '';
+        let stateKey = '';
+
+        if (input.startsWith('cedit_v_')) {
+            const variantId = input.replace('cedit_v_', '');
+            const item = cart.items.find(i => i.variant_id === variantId);
+            if (!item) { await sendTextMessage(from, '❌ Item not found in cart.'); return; }
+            itemName = `${item.product_name}${item.variant_label ? ` (${item.variant_label})` : ''}`;
+            stateKey = `cart_qty_v_${variantId}`;
+        } else {
+            const productId = input.replace('cedit_', '');
+            const item = cart.items.find(i => i.product_id === productId && !i.variant_id);
+            if (!item) { await sendTextMessage(from, '❌ Item not found in cart.'); return; }
+            itemName = item.product_name;
+            stateKey = `cart_qty_${productId}`;
+        }
+
+        await db.userSession.update({ where: { wa_id: from }, data: { active_prod_id: stateKey } });
+        await sendButtons(from,
+            `✏️ *${itemName}*\n\nEnter new quantity (or 0 to remove):`,
+            [{ id: 'c_cart', title: '↩️ Cancel' }]
+        );
         return;
     }
 
@@ -434,8 +560,15 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
         summary += `━━━━━━━━━━━━━━━━━━━━\n`;
         summary += `💰 *Total: ${formatCurrency(total, { merchant, merchantBranding, platform: platformBranding })}*`;
 
+        const deliveryAddr = await getCustomerAddress(from);
+        const addrLine = deliveryAddr
+            ? `\n\n📦 *Delivering to:* ${deliveryAddr}`
+            : '\n\n📍 _No delivery address saved_';
+        summary += addrLine;
+
         await sendButtons(from, summary, [
             { id: 'cart_confirm_order', title: '✅ Confirm & Pay' },
+            { id: 'cart_addr', title: '📍 Add/Change Address' },
             { id: 'c_cart', title: '✏️ Edit Cart' }
         ]);
         return;
@@ -484,13 +617,15 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
         await saveCart(from, null);
 
         // Notify merchant
+        const cartDeliveryAddr = await getCustomerAddress(from);
         const notif = [
             `🛒 *New Order! #${order.id.slice(-5)}*`,
             `👤 Customer: ${from}`,
             `━━━━━━━━━━━━━━━━━━━━`,
             itemsSummary,
             `━━━━━━━━━━━━━━━━━━━━`,
-            `💰 Total: ${formatCurrency(total, { merchant, merchantBranding, platform: platformBranding })}`
+            `💰 Total: ${formatCurrency(total, { merchant, merchantBranding, platform: platformBranding })}`,
+            `📦 Deliver to: ${cartDeliveryAddr || 'No address provided'}`
         ].join('\n');
         await sendTextMessage(merchant.wa_id, notif);
 
@@ -624,7 +759,8 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
 
         await upsertMerchantCustomer(product.merchant.id, from);
         await setCustomerLastMerchant(from, product.merchant.id);
-        await processBuyNow(from, product.merchant, product.id, product.name, product.price, platformBranding);
+        const addrBuyNow = await getCustomerAddress(from);
+        await processBuyNow(from, product.merchant, product.id, product.name, product.price, platformBranding, addrBuyNow);
         return;
     }
 
@@ -648,7 +784,8 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
 
         await upsertMerchantCustomer(variant.product.merchant.id, from);
         await setCustomerLastMerchant(from, variant.product.merchant.id);
-        await processBuyNow(from, variant.product.merchant, variant.product_id, variant.product.name, variant.price, platformBranding);
+        const addrVariant = await getCustomerAddress(from);
+        await processBuyNow(from, variant.product.merchant, variant.product_id, variant.product.name, variant.price, platformBranding, addrVariant);
         return;
     }
 

@@ -82,6 +82,16 @@ export const handlePlatformAdminActions = async (
             return;
         }
 
+        // Check for handle conflict if admin specified a custom handle
+        if (payload?.handle) {
+            const existingHandle = await db.merchant.findFirst({ where: { handle: payload.handle } });
+            if (existingHandle) {
+                await clearState(from);
+                await sendTextMessage(from, `⚠️ Handle *@${payload.handle}* is already in use. Please start again and choose a different handle.`);
+                return;
+            }
+        }
+
         const handle = await generateHandle(payload?.handle || name);
         const adminHandle = await generateAdminHandle(handle);
         const shortCode = generateShortCode();
@@ -193,15 +203,37 @@ export const handlePlatformAdminActions = async (
         if (pendingInvites > 0) msg += `  •  📨 ${pendingInvites} pending invite${pendingInvites !== 1 ? 's' : ''}`;
         if (merchant.description) msg += `\n\n📝 ${merchant.description.substring(0, 80)}`;
 
+        const statusButton = merchant.status === MerchantStatus.ONBOARDING
+            ? { id: `pa_activate_${merchantId}`, title: '🟢 Activate Store' }
+            : merchant.status === MerchantStatus.SUSPENDED
+                ? { id: `pa_suspend_${merchantId}`, title: '🟢 Unsuspend' }
+                : { id: `pa_suspend_${merchantId}`, title: '🔴 Suspend' };
         await sendButtons(from, msg, [
             { id: `pa_store_admins_${merchantId}`, title: '👥 Admins' },
             { id: `pa_store_invites_${merchantId}`, title: '📨 Invites' },
-            { id: `pa_suspend_${merchantId}`, title: merchant.status === MerchantStatus.SUSPENDED ? '🟢 Unsuspend' : '🔴 Suspend' }
+            statusButton
         ]);
         await sendButtons(from, 'Nav:', [
             { id: 'pa_stores', title: '⬅️ Stores' },
             { id: 'pa_menu', title: '🛡️ Admin Menu' }
         ]);
+        return;
+    }
+
+    // ── Activate store (ONBOARDING → ACTIVE) ───────────────────────────────────
+    if (input.startsWith('pa_activate_')) {
+        const merchantId = input.replace('pa_activate_', '');
+        const merchant = await db.merchant.findUnique({ where: { id: merchantId } });
+        if (!merchant) { await sendTextMessage(from, '❌ Store not found.'); return; }
+        if (merchant.status !== MerchantStatus.ONBOARDING) {
+            await sendTextMessage(from, '⚠️ Store is not in ONBOARDING status.');
+            await handlePlatformAdminActions(from, `pa_store_${merchantId}`);
+            return;
+        }
+        await db.merchant.update({ where: { id: merchantId }, data: { status: MerchantStatus.ACTIVE } });
+        await sendTextMessage(merchant.wa_id, `🎉 Your store *${merchant.trading_name}* is now LIVE on Omeru! Type *menu* to access your dashboard.`);
+        await sendTextMessage(from, `🟢 *${merchant.trading_name}* is now ACTIVE.`);
+        await handlePlatformAdminActions(from, `pa_store_${merchantId}`);
         return;
     }
 
@@ -212,6 +244,9 @@ export const handlePlatformAdminActions = async (
         if (!merchant) { await sendTextMessage(from, '❌ Store not found.'); return; }
         const newStatus = merchant.status === MerchantStatus.SUSPENDED ? MerchantStatus.ACTIVE : MerchantStatus.SUSPENDED;
         await db.merchant.update({ where: { id: merchantId }, data: { status: newStatus } });
+        if (newStatus === MerchantStatus.SUSPENDED) {
+            await sendTextMessage(merchant.wa_id, `⚠️ Your store *${merchant.trading_name}* has been suspended by the platform admin. Contact support for more information.`);
+        }
         await sendTextMessage(from, `${newStatus === MerchantStatus.ACTIVE ? '🟢' : '🔴'} *${merchant.trading_name}* is now ${newStatus}.`);
         await handlePlatformAdminActions(from, `pa_store_${merchantId}`);
         return;
