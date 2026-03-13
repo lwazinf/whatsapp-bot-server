@@ -211,6 +211,8 @@ model Order {
   items_summary String?
   status        OrderStatus @default(PENDING)
   alert_count   Int         @default(0)
+  payment_ref   String?
+  payment_url   String?
   order_items   OrderItem[]
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt

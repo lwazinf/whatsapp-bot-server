@@ -3,6 +3,10 @@ import express, { Request, Response } from 'express';
 import cron from 'node-cron';
 import { handleIncomingMessage } from './services/whatsapp/handler';
 import { checkStaleOrders } from './services/jobs/orderAlerts';
+import { verifyWebhookHash } from './services/payments/ozow';
+import { sendTextMessage, sendButtons } from './services/whatsapp/sender';
+import { formatCurrency } from './services/whatsapp/messageTemplates';
+import { db } from './lib/db';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -64,6 +68,101 @@ app.post('/api/whatsapp/webhook', async (req: Request, res: Response) => {
     } catch (err: any) {
         console.error('❌ Webhook Processing Error:', err.message);
         // Do not crash the server on logic errors
+    }
+});
+
+// ── Static payment result pages ────────────────────────────────────────────
+
+const paymentPage = (title: string, message: string, color: string): string => `
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title} — Omeru</title>
+<style>
+  body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f5f5f5}
+  .card{background:#fff;border-radius:16px;padding:40px 32px;text-align:center;max-width:360px;box-shadow:0 4px 24px rgba(0,0,0,.08)}
+  .icon{font-size:56px;margin-bottom:16px}
+  h1{margin:0 0 12px;color:${color};font-size:22px}
+  p{margin:0 0 24px;color:#555;line-height:1.5}
+  .brand{color:#888;font-size:13px;margin-top:24px}
+</style></head><body>
+<div class="card">
+  <div class="icon">${color === 'green' ? '✅' : color === 'orange' ? '❌' : '⚠️'}</div>
+  <h1>${title}</h1>
+  <p>${message}</p>
+  <p><strong>Return to WhatsApp</strong> to continue.</p>
+  <div class="brand">Omeru — Shop smarter on WhatsApp</div>
+</div></body></html>`;
+
+app.get('/payment/success', (_req: Request, res: Response) => {
+    res.send(paymentPage('Payment Successful!', 'Your payment was received. Your order is being prepared.', 'green'));
+});
+app.get('/payment/cancel', (_req: Request, res: Response) => {
+    res.send(paymentPage('Payment Cancelled', 'Your payment was cancelled. Return to WhatsApp to try again.', 'orange'));
+});
+app.get('/payment/error', (_req: Request, res: Response) => {
+    res.send(paymentPage('Payment Error', 'Something went wrong with your payment. Please try again.', 'red'));
+});
+
+// ── Ozow payment webhook ────────────────────────────────────────────────────
+
+app.post('/webhook/ozow', async (req: Request, res: Response) => {
+    res.status(200).send('OK'); // Always respond 200 immediately
+
+    try {
+        const body = req.body as Record<string, string>;
+
+        if (!verifyWebhookHash(body)) {
+            console.warn('❌ Ozow webhook: hash mismatch — ignoring');
+            return;
+        }
+
+        const transactionRef = body.TransactionReference;
+        const status         = body.Status; // Complete | Cancelled | Error | PendingInvestigation
+
+        const order = await db.order.findFirst({
+            where:   { payment_ref: transactionRef },
+            include: { merchant: { include: { branding: true } } }
+        });
+
+        if (!order) {
+            console.warn(`⚠️ Ozow webhook: no order found for ref ${transactionRef}`);
+            return;
+        }
+
+        console.log(`💳 Ozow: ${status} for order ${order.id.slice(-5)} (${transactionRef})`);
+
+        if (status === 'Complete') {
+            await db.order.update({ where: { id: order.id }, data: { status: 'PAID' } });
+
+            const totalStr = formatCurrency(order.total, {
+                merchant:        order.merchant,
+                merchantBranding: order.merchant?.branding
+            });
+
+            await sendTextMessage(
+                order.customer_id,
+                `✅ *Payment received!*\n\nOrder *#${order.id.slice(-5)}* from *${order.merchant?.trading_name}* is confirmed.\n💰 ${totalStr}\n\n_The shop will notify you when your order is ready._`
+            );
+
+            await sendTextMessage(
+                order.merchant?.wa_id || '',
+                `💰 *Payment confirmed!*\nOrder *#${order.id.slice(-5)}* — ${totalStr}\nCustomer: ${order.customer_id}`
+            );
+
+        } else if (status === 'Cancelled' || status === 'Error') {
+            await db.order.update({ where: { id: order.id }, data: { status: 'CANCELLED' } });
+
+            const msg = status === 'Cancelled'
+                ? `❌ Your payment for Order *#${order.id.slice(-5)}* was cancelled.`
+                : `⚠️ Your payment for Order *#${order.id.slice(-5)}* failed.`;
+
+            await sendButtons(order.customer_id, `${msg}\n\nWould you like to try again?`, [
+                { id: `retry_payment_${order.id}`, title: '🔄 Retry Payment' },
+                { id: 'c_my_orders',               title: '📦 My Orders' }
+            ]);
+        }
+    } catch (err: any) {
+        console.error('❌ Ozow webhook error:', err.message);
     }
 });
 

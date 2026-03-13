@@ -2,6 +2,7 @@ import { sendTextMessage, sendListMessage, sendImageMessage, sendButtons } from 
 import { formatCurrency, buildMerchantWelcome } from './messageTemplates';
 import { getPlatformBranding } from './platformBranding';
 import { setCustomerLastMerchant, upsertMerchantCustomer } from './merchantCustomers';
+import { createPaymentRequest } from '../payments/ozow';
 import { db } from '../../lib/db';
 
 const PAGE_SIZE = 8;
@@ -193,10 +194,10 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
             }
         });
 
-        // Clear cart after order
+        // Clear cart after order is created
         await saveCart(from, null);
 
-        // Notify merchant
+        // Notify merchant of new order
         const notif = [
             `🛒 *New Order! #${order.id.slice(-5)}*`,
             `👤 Customer: ${from}`,
@@ -207,25 +208,50 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
         ].join('\n');
         await sendTextMessage(merchant.wa_id, notif);
 
-        // ── OZOW PAYMENT PLACEHOLDER ─────────────────────────────────────────
-        // TODO: Generate Ozow payment link here and send to customer.
-        // const paymentUrl = await createOzowPayment({ orderId: order.id, amount: total, ... });
-        // await sendTextMessage(from, `💳 *Pay here:* ${paymentUrl}`);
-        // ── END OZOW PLACEHOLDER ─────────────────────────────────────────────
+        // ── OZOW PAYMENT ──────────────────────────────────────────────────────
+        try {
+            const { paymentUrl, transactionRef } = await createPaymentRequest({
+                orderId:      order.id,
+                amount:       total,
+                merchantName: merchant.trading_name
+            });
 
-        const confirmMsg = [
-            `✅ *Order Placed! #${order.id.slice(-5)}*`,
-            ``,
-            `🏪 ${merchant.trading_name}`,
-            `💰 ${formatCurrency(total, { merchant, merchantBranding, platform: platformBranding })}`,
-            ``,
-            `_The shop will prepare your order. Payment will be enabled soon — for now the shop owner will be in touch._`
-        ].join('\n');
+            await db.order.update({
+                where: { id: order.id },
+                data:  { payment_ref: transactionRef, payment_url: paymentUrl }
+            });
 
-        await sendButtons(from, confirmMsg, [
-            { id: 'c_my_orders', title: '📦 My Orders' },
-            { id: 'browse_shops', title: '🛍️ Browse More' }
-        ]);
+            const payMsg = [
+                `✅ *Order #${order.id.slice(-5)} confirmed!*`,
+                ``,
+                `🏪 ${merchant.trading_name}`,
+                `💰 ${formatCurrency(total, { merchant, merchantBranding, platform: platformBranding })}`,
+                ``,
+                `💳 *Complete your payment:*`,
+                paymentUrl
+            ].join('\n');
+
+            await sendButtons(from, payMsg, [
+                { id: `retry_payment_${order.id}`, title: '🔄 Resend Link' },
+                { id: 'c_my_orders', title: '📦 My Orders' }
+            ]);
+        } catch (payErr: any) {
+            console.error(`❌ Ozow payment request failed: ${payErr.message}`);
+            // Order exists but payment link generation failed — customer informed
+            const fallbackMsg = [
+                `✅ *Order #${order.id.slice(-5)} placed!*`,
+                ``,
+                `🏪 ${merchant.trading_name}`,
+                `💰 ${formatCurrency(total, { merchant, merchantBranding, platform: platformBranding })}`,
+                ``,
+                `⚠️ _Payment link could not be generated. The shop owner will contact you to arrange payment._`
+            ].join('\n');
+            await sendButtons(from, fallbackMsg, [
+                { id: 'c_my_orders', title: '📦 My Orders' },
+                { id: 'browse_shops', title: '🛍️ Browse More' }
+            ]);
+        }
+        // ── END OZOW ──────────────────────────────────────────────────────────
         return;
     }
 

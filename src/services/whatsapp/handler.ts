@@ -7,6 +7,7 @@ import { handlePlatformAdminActions } from './platformAdmin';
 import { handleHelpCommand } from './helpEngine';
 import { sendTextMessage, sendButtons, sendListMessage } from './sender';
 import { getPlatformSettings } from './platformBranding';
+import { createPaymentRequest } from '../payments/ozow';
 import { db } from '../../lib/db';
 
 /**
@@ -254,6 +255,45 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
 
         if (input === 'c_my_orders' || input.startsWith('view_order_')) {
             await handleCustomerOrders(from, input);
+            return;
+        }
+
+        // Retry payment — resend Ozow link for an existing order
+        if (input.startsWith('retry_payment_')) {
+            const orderId = input.replace('retry_payment_', '');
+            const order = await db.order.findUnique({
+                where:   { id: orderId },
+                include: { merchant: { include: { branding: true } } }
+            });
+            if (!order || order.customer_id !== from) {
+                await sendTextMessage(from, '❌ Order not found.');
+                return;
+            }
+            if (order.status === 'PAID') {
+                await sendTextMessage(from, '✅ This order is already paid!');
+                return;
+            }
+            try {
+                const { paymentUrl, transactionRef } = await createPaymentRequest({
+                    orderId:      order.id,
+                    amount:       order.total,
+                    merchantName: order.merchant?.trading_name || 'Shop'
+                });
+                await db.order.update({
+                    where: { id: order.id },
+                    data:  { payment_ref: transactionRef, payment_url: paymentUrl, status: 'PENDING' }
+                });
+                await sendButtons(from,
+                    `💳 *Payment link for Order #${order.id.slice(-5)}:*\n\n${paymentUrl}`,
+                    [
+                        { id: `retry_payment_${order.id}`, title: '🔄 New Link' },
+                        { id: 'c_my_orders',               title: '📦 My Orders' }
+                    ]
+                );
+            } catch (err: any) {
+                console.error(`❌ Retry payment failed: ${err.message}`);
+                await sendTextMessage(from, '⚠️ Could not generate payment link. Please try again in a moment.');
+            }
             return;
         }
 
