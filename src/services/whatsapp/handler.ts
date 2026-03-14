@@ -1,6 +1,6 @@
 import { MerchantStatus } from '@prisma/client';
 import { handleMerchantAction } from './merchantEngine';
-import { handleOnboardingAction } from './onboardingEngine';
+import { handleOnboardingAction, startOnboarding } from './onboardingEngine';
 import { handleCustomerDiscovery } from './customerDiscovery';
 import { handleCustomerOrders, handleFeedbackTextState } from './customerOrders';
 import { log, AuditAction } from './auditLog';
@@ -192,6 +192,12 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
 
         // 4. ROUTING LOGIC
 
+        // Image upload during onboarding — route before normal MERCHANT handling
+        if (message.type === 'image' && session.active_prod_id?.startsWith('ob') && merchantForUser) {
+            await handleOnboardingAction(from, input, session, merchantForUser, message);
+            return;
+        }
+
         // Registration Flow — only while terms not yet accepted (after acceptance, route to MERCHANT mode)
         if (session.mode === 'REGISTERING' || (merchantForUser && merchantForUser.status !== MerchantStatus.ACTIVE && !merchantForUser.accepted_terms)) {
             const canOnboard = await canAccessOnboarding(from, merchantForUser?.id);
@@ -199,10 +205,9 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
                 await sendTextMessage(from, '⛔ Your account is not yet invited. Please contact the platform admin.');
                 return;
             }
-            // Show "Resuming" banner when merchant re-enters mid-flow
-            const isEntryInput = ['hi', 'hello', 'hey', 'sell', 'register', 'start'].includes(normalizedInput);
-            if (isEntryInput && merchantForUser?.trading_name && !session.active_prod_id) {
-                await sendTextMessage(from, `👋 *Resuming your onboarding for *${merchantForUser.trading_name}*!\n\nLet's continue where you left off...`);
+            if (!merchantForUser) {
+                await sendTextMessage(from, '⚠️ Merchant profile not found. Contact platform admin.');
+                return;
             }
             await handleOnboardingAction(from, input, session, merchantForUser, message);
             return;
@@ -474,13 +479,13 @@ const handleSwitchMode = async (from: string, _session: any): Promise<void> => {
         include: { merchant: true }
     });
 
-    const stores: Array<{ id: string; name: string }> = [];
-    if (directMerchant && directMerchant.status === MerchantStatus.ACTIVE) {
-        stores.push({ id: directMerchant.id, name: directMerchant.trading_name });
+    const stores: Array<{ id: string; name: string; onboarding: boolean }> = [];
+    if (directMerchant && directMerchant.status !== MerchantStatus.SUSPENDED) {
+        stores.push({ id: directMerchant.id, name: directMerchant.trading_name, onboarding: directMerchant.status === MerchantStatus.ONBOARDING });
     }
     for (const rec of ownerRecords) {
-        if (rec.merchant.status === MerchantStatus.ACTIVE && !stores.find(s => s.id === rec.merchant.id)) {
-            stores.push({ id: rec.merchant.id, name: rec.merchant.trading_name });
+        if (rec.merchant.status !== MerchantStatus.SUSPENDED && !stores.find(s => s.id === rec.merchant.id)) {
+            stores.push({ id: rec.merchant.id, name: rec.merchant.trading_name, onboarding: rec.merchant.status === MerchantStatus.ONBOARDING });
         }
     }
 
@@ -494,7 +499,8 @@ const handleSwitchMode = async (from: string, _session: any): Promise<void> => {
         ];
         if (isAdmin) buttons.push({ id: 'sw_admin', title: '🛡️ Platform Admin' });
         for (const store of stores.slice(0, 3 - buttons.length)) {
-            buttons.push({ id: `sw_merchant_${store.id}`, title: `🏪 ${store.name}`.substring(0, 20) });
+            const icon = store.onboarding ? '⚙️' : '🏪';
+            buttons.push({ id: `sw_merchant_${store.id}`, title: `${icon} ${store.name}`.substring(0, 20) });
         }
         await sendButtons(from, '🔄 *Switch Mode*\n\nChoose where to go:', buttons);
     } else {
@@ -506,7 +512,8 @@ const handleSwitchMode = async (from: string, _session: any): Promise<void> => {
             rows.push({ id: 'sw_admin', title: '🛡️ Platform Admin', description: 'Manage platform & merchants' });
         }
         for (const store of stores) {
-            rows.push({ id: `sw_merchant_${store.id}`, title: `🏪 ${store.name}`.substring(0, 24), description: 'Merchant dashboard' });
+            const icon = store.onboarding ? '⚙️' : '🏪';
+            rows.push({ id: `sw_merchant_${store.id}`, title: `${icon} ${store.name}`.substring(0, 24), description: store.onboarding ? 'Setup in progress' : 'Merchant dashboard' });
         }
         await sendListMessage(from, '🔄 *Switch Mode*\n\nChoose where to go:', '🔄 Select Mode', [
             { title: 'Available Modes', rows }
@@ -606,7 +613,12 @@ const processInviteAccept = async (waId: string, invite: any, accept: boolean): 
         await log(AuditAction.INVITE_ACCEPTED, waId, 'MerchantInvite', invite.id, {
             merchant_id: invite.merchant_id, merchant_name: merchantName, role: invite.role
         });
-        await sendTextMessage(waId, `✅ Invite accepted! You now have access to *${merchantName}*. Type *menu* to open the dashboard.`);
+        // Kick off guided onboarding (new merchants) or store tour (staff on active stores)
+        if (invite.merchant) {
+            await startOnboarding(waId, invite.merchant, invite.role);
+        } else {
+            await sendTextMessage(waId, `✅ Invite accepted! You now have access to *${merchantName}*. Type *menu* to open the dashboard.`);
+        }
         return;
     }
 

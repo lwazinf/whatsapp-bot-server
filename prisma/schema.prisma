@@ -78,6 +78,11 @@ model Merchant {
   show_in_browse    Boolean        @default(true)
   welcome_image_url String?
   store_category    String?
+  location_visible  Boolean        @default(false)
+  onboarding_step   String?
+  kyc_id_doc_url    String?
+  kyc_bank_proof_url String?
+  kyc_submitted_at  DateTime?
   status            MerchantStatus @default(ACTIVE)
   categories        Category[]
   products          Product[]

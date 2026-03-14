@@ -4,6 +4,7 @@ import { handleKitchenActions } from './merchantKitchen';
 import { handleSettingsActions } from './merchantSettings';
 import { getMerchantStats, showMerchantDashboard } from './merchantDashboard';
 import { handleBroadcastActions } from './merchantBroadcast';
+import { handleOnboardingAction, startOnboarding } from './onboardingEngine';
 import { sendButtons, sendTextMessage } from './sender';
 import { formatCurrency } from './messageTemplates';
 import { getPlatformBranding } from './platformBranding';
@@ -52,7 +53,35 @@ export const handleMerchantAction = async (
     try {
         const platformBranding = await getPlatformBranding(db);
         const merchantBranding = await db.merchantBranding.findUnique({ where: { merchant_id: merchant.id } });
-        // Going-live disclaimer acceptance (end of onboarding)
+
+        // ── Guided onboarding routing ────────────────────────────────────────
+        // Any message while active_prod_id starts with 'ob' routes to onboarding engine
+        if (session.active_prod_id?.startsWith('ob')) {
+            await handleOnboardingAction(from, input, session, merchant, message);
+            return;
+        }
+
+        // ONBOARDING merchants with no active flow: show "Resume Setup" for menu/dashboard,
+        // or resume automatically if returning from product/variant creation
+        if (merchant.status === 'ONBOARDING') {
+            const isMenuRequest = input === 'm_dashboard' || input.toLowerCase() === 'menu' || input.toLowerCase() === 'home';
+            const isResumeRequest = input === 'ob_resume';
+
+            if (isResumeRequest || (!session.active_prod_id && merchant.onboarding_step)) {
+                await startOnboarding(from, merchant, 'OWNER');
+                return;
+            }
+
+            if (isMenuRequest) {
+                await sendButtons(from,
+                    `⚙️ *${merchant.trading_name}* — Setup in progress\n\nYour store isn't live yet. Let's finish setting it up!`,
+                    [{ id: 'ob_resume', title: '▶️ Resume Setup' }]
+                );
+                return;
+            }
+        }
+
+        // Going-live disclaimer acceptance (end of old onboarding — kept for backward compat)
         if (input.startsWith('ob_golive_accept_')) {
             const activatedMerchant = await db.merchant.update({
                 where: { id: merchant.id },
