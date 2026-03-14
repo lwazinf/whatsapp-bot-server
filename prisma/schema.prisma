@@ -129,6 +129,7 @@ model MerchantCustomer {
   last_interaction_at DateTime @default(now())
   opt_out             Boolean  @default(false)
   has_seen_welcome    Boolean  @default(false)
+  is_bookmarked       Boolean  @default(false)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 

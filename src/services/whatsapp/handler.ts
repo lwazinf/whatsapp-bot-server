@@ -240,6 +240,7 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
                 ]
             );
             await sendButtons(from, 'More:', [
+                { id: 'c_bookmarks', title: '🔖 Saved Stores' },
                 { id: 'c_settings', title: '⚙️ Settings & Help' }
             ]);
             return;
@@ -305,7 +306,8 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
             input.startsWith('resume_bnp_') || input.startsWith('resume_bnv_') ||
             input === 'c_cart' || input === 'cart_clear' || input === 'cart_checkout' || input === 'cart_confirm_order' ||
             input === 'cart_edit_qty' || input.startsWith('cedit_') ||
-            input.startsWith('wish_prod_') || input === 'c_wishlist'
+            input.startsWith('wish_prod_') || input === 'c_wishlist' ||
+            input === 'c_bookmarks' || input.startsWith('bm_toggle_')
         ) {
             await handleCustomerDiscovery(from, input);
             return;

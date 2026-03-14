@@ -345,6 +345,19 @@ const sendStoreProductPage = async (from: string, merchantHandle: string, page: 
     const sortLabel = sortCode ? ` • ${getSortShortLabel(sortCode)}` : '';
     const navText = `📄 Page ${page} of ${totalPages}  •  ${merchant.trading_name}${sortLabel}`;
     await sendButtons(from, navText, navBtns.slice(0, 3));
+
+    // Bookmark bubble — page 1 only, shown when store is not yet saved
+    if (page === 1) {
+        const record = await db.merchantCustomer.findUnique({
+            where: { merchant_id_wa_id: { merchant_id: merchant.id, wa_id: from } }
+        });
+        if (!record?.is_bookmarked) {
+            await sendButtons(from,
+                `🔖 _Save *${merchant.trading_name}* for quick access later._`,
+                [{ id: `bm_toggle_${merchantHandle}`, title: '🔖 Save Store' }]
+            );
+        }
+    }
 };
 
 // ── Browse: category selection ────────────────────────────────────────────────
@@ -806,6 +819,79 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
             '👀 View Item',
             [{ title: 'Saved Items', rows }]
         );
+        return;
+    }
+
+    // ── Bookmark toggle ───────────────────────────────────────────────────────
+    if (input.startsWith('bm_toggle_')) {
+        const handle = input.replace('bm_toggle_', '');
+        const merchant = await db.merchant.findFirst({ where: { handle: handle.toLowerCase() } });
+        if (!merchant) { await sendTextMessage(from, '❌ Store not found.'); return; }
+
+        const existing = await db.merchantCustomer.findUnique({
+            where: { merchant_id_wa_id: { merchant_id: merchant.id, wa_id: from } }
+        });
+        const nowBookmarked = !existing?.is_bookmarked;
+
+        await db.merchantCustomer.upsert({
+            where: { merchant_id_wa_id: { merchant_id: merchant.id, wa_id: from } },
+            update: { is_bookmarked: nowBookmarked },
+            create: { merchant_id: merchant.id, wa_id: from, is_bookmarked: true }
+        });
+
+        if (nowBookmarked) {
+            await sendButtons(from,
+                `🔖 *${merchant.trading_name}* saved!\n\nFind it anytime in My Account → Saved Stores.`,
+                [
+                    { id: `@${handle}`, title: '🏪 Back to Store' },
+                    { id: 'c_bookmarks', title: '🔖 Saved Stores' }
+                ]
+            );
+        } else {
+            await sendButtons(from,
+                `🔖 *${merchant.trading_name}* removed from your saved stores.`,
+                [
+                    { id: `@${handle}`, title: '🏪 Back to Store' },
+                    { id: 'c_bookmarks', title: '🔖 Saved Stores' }
+                ]
+            );
+        }
+        return;
+    }
+
+    // ── Saved stores (bookmarks) ──────────────────────────────────────────────
+    if (input === 'c_bookmarks') {
+        const saved = await db.merchantCustomer.findMany({
+            where: { wa_id: from, is_bookmarked: true },
+            include: { merchant: true },
+            orderBy: { updatedAt: 'desc' }
+        });
+
+        if (saved.length === 0) {
+            await sendButtons(from,
+                '🔖 No saved stores yet.\n\nVisit a store and tap *Save Store* to bookmark it for quick access.',
+                [
+                    { id: 'browse_shops', title: '🛍️ Browse Stores' },
+                    { id: 'c_account', title: '↩️ My Account' }
+                ]
+            );
+            return;
+        }
+
+        const rows = saved.map((s: any) => ({
+            id: `@${s.merchant.handle}`,
+            title: s.merchant.trading_name.substring(0, 24),
+            description: `@${s.merchant.handle}`
+        }));
+
+        await sendListMessage(from,
+            `🔖 *Saved Stores* (${saved.length})`,
+            '🏪 Visit',
+            [{ title: 'Your Stores', rows }]
+        );
+        await sendButtons(from, 'Manage:', [
+            { id: 'c_account', title: '↩️ My Account' }
+        ]);
         return;
     }
 
