@@ -5,6 +5,7 @@ import { setCustomerLastMerchant, upsertMerchantCustomer } from './merchantCusto
 import { createPaymentRequest } from '../payments/ozow';
 import { db } from '../../lib/db';
 import { getCustomerAddress, startAddressFlow } from './customerAddress';
+import { log, AuditAction } from './auditLog';
 
 const STORE_PROD_PAGE_SIZE = 3;
 const BROWSE_PAGE_SIZE = 5;
@@ -150,6 +151,11 @@ const processBuyNow = async (
             status: 'PENDING',
             order_items: { create: [{ product_id: productId, quantity: 1, price }] }
         }
+    });
+
+    await log(AuditAction.ORDER_PLACED, from, 'Order', order.id, {
+        merchant_id: merchant.id, merchant_name: merchant.trading_name,
+        order_total: price, items_summary: `1x ${productName}`, source: 'buy_now'
     });
 
     // Notify merchant
@@ -704,6 +710,10 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
         });
 
         await saveCart(from, null);
+        await log(AuditAction.ORDER_PLACED, from, 'Order', order.id, {
+            merchant_id: merchant.id, merchant_name: merchant.trading_name,
+            order_total: total, items_summary: itemsSummary, source: 'cart'
+        });
 
         // Notify merchant
         const cartDeliveryAddr = await getCustomerAddress(from);

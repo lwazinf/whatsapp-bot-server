@@ -2,6 +2,7 @@ import { MerchantStatus, Merchant, UserSession } from '@prisma/client';
 import { sendTextMessage, sendButtons } from './sender';
 import { getPlatformSettings } from './platformBranding';
 import { db } from '../../lib/db';
+import { log, AuditAction } from './auditLog';
 
 const STATE = {
     HOURS_MF: 'OB_HRS_MF',
@@ -241,6 +242,9 @@ const handleTerms = async (from: string, input: string, merchant: Merchant): Pro
         await db.userSession.update({
             where: { wa_id: from },
             data: { mode: 'MERCHANT', active_merchant_id: merchant.id, active_prod_id: null }
+        });
+        await log(AuditAction.TERMS_ACCEPTED, from, 'Merchant', merchant.id, {
+            merchant_name: merchant.trading_name, handle: merchant.handle
         });
 
         await sendButtons(from,

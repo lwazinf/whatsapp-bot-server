@@ -3,6 +3,7 @@ import { handleMerchantAction } from './merchantEngine';
 import { handleOnboardingAction } from './onboardingEngine';
 import { handleCustomerDiscovery } from './customerDiscovery';
 import { handleCustomerOrders, handleFeedbackTextState } from './customerOrders';
+import { log, AuditAction } from './auditLog';
 import { handlePlatformAdminActions } from './platformAdmin';
 import { handleHelpCommand } from './helpEngine';
 import { sendTextMessage, sendButtons, sendListMessage, sendImageMessage } from './sender';
@@ -601,6 +602,9 @@ const processInviteAccept = async (waId: string, invite: any, accept: boolean): 
             create: { wa_id: waId, mode: 'MERCHANT', active_merchant_id: invite.merchant_id }
         });
         const merchantName = invite.merchant?.trading_name || 'the store';
+        await log(AuditAction.INVITE_ACCEPTED, waId, 'MerchantInvite', invite.id, {
+            merchant_id: invite.merchant_id, merchant_name: merchantName, role: invite.role
+        });
         await sendTextMessage(waId, `✅ Invite accepted! You now have access to *${merchantName}*. Type *menu* to open the dashboard.`);
         return;
     }
@@ -608,6 +612,9 @@ const processInviteAccept = async (waId: string, invite: any, accept: boolean): 
     await db.merchantInvite.update({
         where: { id: invite.id },
         data: { status: 'REVOKED', revoked_at: new Date() }
+    });
+    await log(AuditAction.INVITE_DECLINED, waId, 'MerchantInvite', invite.id, {
+        merchant_id: invite.merchant_id
     });
     await sendTextMessage(waId, '❌ Invite declined.');
 };

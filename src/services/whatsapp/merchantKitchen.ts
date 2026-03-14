@@ -3,6 +3,7 @@ import { sendTextMessage, sendButtons, sendListMessage } from './sender';
 import { formatCurrency } from './messageTemplates';
 import { getPlatformBranding, getPlatformSettings } from './platformBranding';
 import { db } from '../../lib/db';
+import { log, AuditAction } from './auditLog';
 
 const ADMIN_NUMBER = process.env.ADMIN_WHATSAPP_NUMBER;
 
@@ -177,6 +178,10 @@ export const handleKitchenActions = async (
             }
 
             await db.order.update({ where: { id: oid }, data: { status: OrderStatus.CANCELLED } });
+            await log(AuditAction.ORDER_CANCELLED_MERCHANT, from, 'Order', oid, {
+                merchant_id: merchant.id, merchant_name: merchant.trading_name,
+                customer_wa_id: order.customer_id, order_total: order.total
+            });
 
             // Notify customer
             await sendTextMessage(
@@ -225,9 +230,13 @@ export const handleKitchenActions = async (
             }
 
             await db.order.update({ where: { id: oid }, data: { status: OrderStatus.READY_FOR_PICKUP } });
+            await log(AuditAction.ORDER_MARKED_READY, from, 'Order', oid, {
+                merchant_id: merchant.id, merchant_name: merchant.trading_name,
+                customer_wa_id: order.customer_id, order_total: order.total
+            });
 
             // Notify customer
-            await sendTextMessage(order.customer_id, 
+            await sendTextMessage(order.customer_id,
                 `🛎️ *Order Ready!*\n\nYour order from *${merchant.trading_name}* is ready!\n\n📦 #${order.id.slice(-5)}\n📍 ${merchant.address || 'See store for pickup'}`
             );
 
@@ -247,6 +256,10 @@ export const handleKitchenActions = async (
             }
 
             await db.order.update({ where: { id: oid }, data: { status: OrderStatus.COMPLETED } });
+            await log(AuditAction.ORDER_COMPLETED, from, 'Order', oid, {
+                merchant_id: merchant.id, merchant_name: merchant.trading_name,
+                customer_wa_id: order.customer_id, order_total: order.total
+            });
 
             // Notify customer + prompt for rating
             await sendTextMessage(order.customer_id, `🎉 *Order Complete!*\n\nThank you for ordering from *${merchant.trading_name}*!`);

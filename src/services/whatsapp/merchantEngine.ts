@@ -8,6 +8,7 @@ import { sendButtons, sendTextMessage } from './sender';
 import { formatCurrency } from './messageTemplates';
 import { getPlatformBranding } from './platformBranding';
 import { db } from '../../lib/db';
+import { log, AuditAction } from './auditLog';
 
 const INVENTORY_PREFIXES = [
     'm_inventory',
@@ -56,6 +57,9 @@ export const handleMerchantAction = async (
             const activatedMerchant = await db.merchant.update({
                 where: { id: merchant.id },
                 data: { status: 'ACTIVE' }
+            });
+            await log(AuditAction.STORE_WENT_LIVE, from, 'Merchant', merchant.id, {
+                merchant_name: activatedMerchant.trading_name, handle: activatedMerchant.handle
             });
             await sendButtons(from,
                 `🎉 *${activatedMerchant.trading_name} is now LIVE!*\n\n` +

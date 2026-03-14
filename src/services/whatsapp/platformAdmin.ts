@@ -1,6 +1,7 @@
 import { MerchantStatus } from '@prisma/client';
 import { sendButtons, sendTextMessage, sendListMessage } from './sender';
 import { db } from '../../lib/db';
+import { log, AuditAction } from './auditLog';
 
 const PAGE = 8;
 
@@ -123,6 +124,9 @@ export const handlePlatformAdminActions = async (
             );
         } catch { /* silent — fallback code shown below */ }
 
+        await log(AuditAction.INVITE_SENT, from, 'Merchant', merchant.id, {
+            merchant_name: name, owner_wa_id: ownerWaId, handle: merchant.handle, short_code: shortCode
+        });
         await clearState(from);
         await sendTextMessage(from,
             `✅ *Invite created!*\n\n` +
@@ -219,8 +223,74 @@ export const handlePlatformAdminActions = async (
         ]);
         await sendButtons(from, 'Nav:', [
             { id: 'pa_stores', title: '⬅️ Stores' },
+            { id: `pa_override_${merchantId}`, title: '🔧 Override Status' },
             { id: 'pa_menu', title: '🛡️ Admin Menu' }
         ]);
+        return;
+    }
+
+    // ── Override store status (admin force-set) ────────────────────────────────
+    if (input.startsWith('pa_override_') && !input.startsWith('pa_override_set_') && !input.startsWith('pa_override_confirm_')) {
+        const merchantId = input.replace('pa_override_', '');
+        const merchant = await db.merchant.findUnique({ where: { id: merchantId } });
+        if (!merchant) { await sendTextMessage(from, '❌ Store not found.'); return; }
+
+        const rows = [
+            { id: `pa_override_set_${merchantId}_ONBOARDING`, title: '🟡 Set ONBOARDING', description: 'Revert store to onboarding state' },
+            { id: `pa_override_set_${merchantId}_ACTIVE`,     title: '🟢 Set ACTIVE',     description: 'Force-activate store immediately' },
+            { id: `pa_override_set_${merchantId}_SUSPENDED`,  title: '🔴 Set SUSPENDED',  description: 'Suspend store (hides from customers)' }
+        ];
+        await sendListMessage(from,
+            `🔧 *Override Status — ${merchant.trading_name}*\n\nCurrent: ${merchant.status}\n\nSelect new status:`,
+            '🔧 Select Status',
+            [{ title: 'Status Options', rows }]
+        );
+        await sendButtons(from, 'Nav:', [{ id: `pa_store_${merchantId}`, title: '⬅️ Back' }]);
+        return;
+    }
+
+    if (input.startsWith('pa_override_set_')) {
+        const rest = input.replace('pa_override_set_', '');
+        const lastUnderscore = rest.lastIndexOf('_');
+        const merchantId = rest.substring(0, lastUnderscore);
+        const newStatus = rest.substring(lastUnderscore + 1) as MerchantStatus;
+        const merchant = await db.merchant.findUnique({ where: { id: merchantId } });
+        if (!merchant) { await sendTextMessage(from, '❌ Store not found.'); return; }
+
+        await sendButtons(from,
+            `🔧 *Confirm Override*\n\n🏪 ${merchant.trading_name}\n📊 ${merchant.status} → *${newStatus}*\n\nThis is logged for compliance.`,
+            [
+                { id: `pa_override_confirm_${merchantId}_${newStatus}`, title: '✅ Confirm Override' },
+                { id: `pa_store_${merchantId}`, title: '❌ Cancel' }
+            ]
+        );
+        return;
+    }
+
+    if (input.startsWith('pa_override_confirm_')) {
+        const rest = input.replace('pa_override_confirm_', '');
+        const lastUnderscore = rest.lastIndexOf('_');
+        const merchantId = rest.substring(0, lastUnderscore);
+        const newStatus = rest.substring(lastUnderscore + 1) as MerchantStatus;
+        const merchant = await db.merchant.findUnique({ where: { id: merchantId } });
+        if (!merchant) { await sendTextMessage(from, '❌ Store not found.'); return; }
+
+        const prevStatus = merchant.status;
+        await db.merchant.update({ where: { id: merchantId }, data: { status: newStatus } });
+        await log(AuditAction.ADMIN_STATUS_OVERRIDE, from, 'Merchant', merchantId, {
+            merchant_name: merchant.trading_name, handle: merchant.handle,
+            prev_status: prevStatus, new_status: newStatus, admin_wa_id: from
+        });
+
+        // Notify merchant of significant changes
+        if (newStatus === MerchantStatus.ACTIVE && prevStatus !== MerchantStatus.ACTIVE) {
+            await sendTextMessage(merchant.wa_id, `🎉 Your store *${merchant.trading_name}* has been activated by the platform admin. Type *menu* to access your dashboard.`);
+        } else if (newStatus === MerchantStatus.SUSPENDED) {
+            await sendTextMessage(merchant.wa_id, `⚠️ Your store *${merchant.trading_name}* has been suspended by the platform admin. Contact support for more information.`);
+        }
+
+        await sendTextMessage(from, `✅ *${merchant.trading_name}* status changed: ${prevStatus} → *${newStatus}*. Logged.`);
+        await handlePlatformAdminActions(from, `pa_store_${merchantId}`);
         return;
     }
 
@@ -235,6 +305,9 @@ export const handlePlatformAdminActions = async (
             return;
         }
         await db.merchant.update({ where: { id: merchantId }, data: { status: MerchantStatus.ACTIVE } });
+        await log(AuditAction.ADMIN_STORE_ACTIVATED, from, 'Merchant', merchantId, {
+            merchant_name: merchant.trading_name, handle: merchant.handle, admin_wa_id: from
+        });
         await sendTextMessage(merchant.wa_id, `🎉 Your store *${merchant.trading_name}* is now LIVE on Omeru! Type *menu* to access your dashboard.`);
         await sendTextMessage(from, `🟢 *${merchant.trading_name}* is now ACTIVE.`);
         await handlePlatformAdminActions(from, `pa_store_${merchantId}`);
@@ -248,6 +321,10 @@ export const handlePlatformAdminActions = async (
         if (!merchant) { await sendTextMessage(from, '❌ Store not found.'); return; }
         const newStatus = merchant.status === MerchantStatus.SUSPENDED ? MerchantStatus.ACTIVE : MerchantStatus.SUSPENDED;
         await db.merchant.update({ where: { id: merchantId }, data: { status: newStatus } });
+        const suspendAction = newStatus === MerchantStatus.SUSPENDED ? AuditAction.ADMIN_STORE_SUSPENDED : AuditAction.ADMIN_STORE_UNSUSPENDED;
+        await log(suspendAction, from, 'Merchant', merchantId, {
+            merchant_name: merchant.trading_name, handle: merchant.handle, admin_wa_id: from
+        });
         if (newStatus === MerchantStatus.SUSPENDED) {
             await sendTextMessage(merchant.wa_id, `⚠️ Your store *${merchant.trading_name}* has been suspended by the platform admin. Contact support for more information.`);
         }
@@ -329,6 +406,9 @@ export const handlePlatformAdminActions = async (
         await db.merchantInvite.updateMany({
             where: { merchant_id: merchantId, invited_wa_id: targetWaId, status: 'PENDING' },
             data: { status: 'REVOKED', revoked_at: new Date() }
+        });
+        await log(AuditAction.ADMIN_ACCESS_REVOKED, from, 'MerchantOwner', `${merchantId}_${targetWaId}`, {
+            merchant_name: merchant.trading_name, revoked_wa_id: targetWaId, admin_wa_id: from
         });
 
         await sendTextMessage(from, `✅ Access revoked for ${targetWaId} on *${merchant.trading_name}*.`);

@@ -2,6 +2,7 @@ import { Merchant, UserSession } from '@prisma/client';
 import { sendButtons, sendTextMessage } from './sender';
 import { buildOptOutFooter } from './messageTemplates';
 import { db } from '../../lib/db';
+import { log, AuditAction } from './auditLog';
 
 const STATE = {
     MESSAGE: 'BROADCAST_MESSAGE'
@@ -67,6 +68,10 @@ export const handleBroadcastActions = async (
         }
 
         await db.userSession.update({ where: { wa_id: from }, data: { active_prod_id: null } });
+        await log(AuditAction.BROADCAST_SENT, from, 'Merchant', merchant.id, {
+            merchant_name: merchant.trading_name, recipients_sent: sent,
+            recipients_total: customers.length, message_preview: text.substring(0, 100)
+        });
         await sendTextMessage(from, `✅ Broadcast sent to ${sent} customers.`);
         return;
     }

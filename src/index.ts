@@ -7,6 +7,7 @@ import { verifyWebhookHash } from './services/payments/ozow';
 import { sendTextMessage, sendButtons } from './services/whatsapp/sender';
 import { formatCurrency } from './services/whatsapp/messageTemplates';
 import { db } from './lib/db';
+import { log, AuditAction } from './services/whatsapp/auditLog';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -144,6 +145,10 @@ app.post('/webhook/ozow', async (req: Request, res: Response) => {
 
         if (status === 'Complete') {
             await db.order.update({ where: { id: order.id }, data: { status: 'PAID' } });
+            await log(AuditAction.ORDER_PAID, 'system', 'Order', order.id, {
+                merchant_id: order.merchant_id, merchant_name: order.merchant?.trading_name,
+                customer_wa_id: order.customer_id, order_total: order.total, transaction_ref: transactionRef
+            });
 
             const totalStr = formatCurrency(order.total, {
                 merchant:        order.merchant,

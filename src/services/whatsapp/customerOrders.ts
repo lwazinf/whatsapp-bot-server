@@ -4,6 +4,7 @@ import { getPlatformBranding } from './platformBranding';
 import { createPaymentRequest } from '../payments/ozow';
 import { db } from '../../lib/db';
 import { Prisma } from '@prisma/client';
+import { log, AuditAction } from './auditLog';
 
 export const handleCustomerOrders = async (from: string, input: string): Promise<void> => {
     if (input === 'c_my_orders') {
@@ -119,6 +120,9 @@ export const handleCustomerOrders = async (from: string, input: string): Promise
         }
 
         await db.order.update({ where: { id: orderId }, data: { status: 'CANCELLED' } });
+        await log(AuditAction.ORDER_CANCELLED_CUSTOMER, from, 'Order', orderId, {
+            merchant_id: order.merchant_id, order_total: order.total
+        });
 
         await sendButtons(from,
             `🗑️ Order *#${order.id.slice(-5)}* has been deleted.`,
