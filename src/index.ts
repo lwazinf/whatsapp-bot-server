@@ -3,7 +3,8 @@ import express, { Request, Response } from 'express';
 import cron from 'node-cron';
 import { handleIncomingMessage } from './services/whatsapp/handler';
 import { checkStaleOrders } from './services/jobs/orderAlerts';
-import { verifyWebhookHash } from './services/payments/ozow';
+import { verifyITN } from './services/payments/payfast';
+// import { verifyWebhookHash } from './services/payments/ozow'; // replaced by PayFast
 import { sendTextMessage, sendButtons } from './services/whatsapp/sender';
 import { formatCurrency } from './services/whatsapp/messageTemplates';
 import { db } from './lib/db';
@@ -108,51 +109,65 @@ app.get('/payment/error', (_req: Request, res: Response) => {
     res.send(paymentPage('Payment Error', 'Something went wrong with your payment. Please try again.', 'red'));
 });
 
-// ── Ozow payment webhook ────────────────────────────────────────────────────
+// ── PayFast ITN webhook ─────────────────────────────────────────────────────
+// PayFast sends application/x-www-form-urlencoded (parsed by express.urlencoded above).
+// Must respond HTTP 200 with empty body — PayFast retries on any other response.
 
-app.post('/webhook/ozow', async (req: Request, res: Response) => {
-    res.status(200).send('OK'); // Always respond 200 immediately
+app.post('/webhook/payfast', async (req: Request, res: Response) => {
+    res.status(200).send(''); // respond immediately — PayFast requires empty 200
 
     try {
-        const body = req.body as Record<string, string>;
+        const body      = req.body as Record<string, string>;
+        const sourceIp  = (req.headers['x-forwarded-for'] as string | undefined)
+                            ?.split(',')[0]?.trim()
+                          ?? req.socket?.remoteAddress
+                          ?? '';
 
-        console.log('📦 Ozow webhook raw body:', JSON.stringify(body));
+        console.log('📦 PayFast ITN body:', JSON.stringify(body));
 
-        const hashOk = verifyWebhookHash(body);
-        if (!hashOk) {
-            if (process.env.OZOW_SKIP_HASH_VERIFY === 'true') {
-                console.warn('⚠️ Ozow webhook: hash mismatch — processing anyway (OZOW_SKIP_HASH_VERIFY=true)');
-            } else {
-                console.warn('❌ Ozow webhook: hash mismatch — ignoring');
-                return;
-            }
+        const { valid, reason } = await verifyITN(body, sourceIp);
+        if (!valid) {
+            console.warn(`❌ PayFast ITN: verification failed — ${reason}`);
+            return;
         }
 
-        const transactionRef = body.TransactionReference;
-        const status         = body.Status; // Complete | Cancelled | Error | PendingInvestigation
+        const orderId       = body.m_payment_id;   // our orderId stored as payment_ref
+        const paymentStatus = body.payment_status;  // COMPLETE | FAILED | CANCELLED
+        const pfPaymentId   = body.pf_payment_id;   // PayFast's own transaction ID
 
+        // Look up by payment_ref = orderId (set when we created the payment URL)
         const order = await db.order.findFirst({
-            where:   { payment_ref: transactionRef },
+            where:   { payment_ref: orderId },
             include: { merchant: { include: { branding: true } } }
         });
 
         if (!order) {
-            console.warn(`⚠️ Ozow webhook: no order found for ref ${transactionRef}`);
+            console.warn(`⚠️ PayFast ITN: no order found for m_payment_id=${orderId}`);
             return;
         }
 
-        console.log(`💳 Ozow: ${status} for order ${order.id.slice(-5)} (${transactionRef})`);
+        console.log(`💳 PayFast: ${paymentStatus} for order #${order.id.slice(-5)} (pf_id=${pfPaymentId})`);
 
-        if (status === 'Complete') {
+        if (paymentStatus === 'COMPLETE') {
+            if (order.status === 'PAID') {
+                console.log(`ℹ️ Order ${order.id.slice(-5)} already marked PAID — skipping duplicate ITN`);
+                return;
+            }
+
             await db.order.update({ where: { id: order.id }, data: { status: 'PAID' } });
+
             await log(AuditAction.ORDER_PAID, 'system', 'Order', order.id, {
-                merchant_id: order.merchant_id, merchant_name: order.merchant?.trading_name,
-                customer_wa_id: order.customer_id, order_total: order.total, transaction_ref: transactionRef
+                merchant_id:    order.merchant_id,
+                merchant_name:  order.merchant?.trading_name,
+                customer_wa_id: order.customer_id,
+                order_total:    order.total,
+                pf_payment_id:  pfPaymentId,
+                gateway:        'payfast',
             });
 
             const totalStr = formatCurrency(order.total, {
-                merchant:        order.merchant,
-                merchantBranding: order.merchant?.branding
+                merchant:         order.merchant,
+                merchantBranding: order.merchant?.branding,
             });
 
             await sendTextMessage(
@@ -165,22 +180,24 @@ app.post('/webhook/ozow', async (req: Request, res: Response) => {
                 `💰 *Payment confirmed!*\nOrder *#${order.id.slice(-5)}* — ${totalStr}\nCustomer: ${order.customer_id}`
             );
 
-        } else if (status === 'Cancelled' || status === 'Error') {
-            await db.order.update({ where: { id: order.id }, data: { status: 'CANCELLED' } });
-
-            const msg = status === 'Cancelled'
-                ? `❌ Your payment for Order *#${order.id.slice(-5)}* was cancelled.`
-                : `⚠️ Your payment for Order *#${order.id.slice(-5)}* failed.`;
+        } else if (paymentStatus === 'FAILED' || paymentStatus === 'CANCELLED') {
+            // Leave order PENDING — customer can still retry via the payment link
+            const msg = paymentStatus === 'FAILED'
+                ? `⚠️ Your payment for Order *#${order.id.slice(-5)}* failed.`
+                : `❌ Your payment for Order *#${order.id.slice(-5)}* was cancelled.`;
 
             await sendButtons(order.customer_id, `${msg}\n\nWould you like to try again?`, [
                 { id: `retry_payment_${order.id}`, title: '🔄 Retry Payment' },
-                { id: 'c_my_orders',               title: '📦 My Orders' }
+                { id: 'c_my_orders',               title: '📦 My Orders' },
             ]);
         }
     } catch (err: any) {
-        console.error('❌ Ozow webhook error:', err.message);
+        console.error('❌ PayFast ITN error:', err.message);
     }
 });
+
+// ── Ozow webhook — commented out (replaced by PayFast) ─────────────────────
+// app.post('/webhook/ozow', async (req: Request, res: Response) => { ... });
 
 app.listen(Number(PORT), '0.0.0.0', () => {
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');

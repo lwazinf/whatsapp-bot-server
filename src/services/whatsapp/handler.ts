@@ -8,7 +8,8 @@ import { handlePlatformAdminActions } from './platformAdmin';
 import { handleHelpCommand } from './helpEngine';
 import { sendTextMessage, sendButtons, sendListMessage, sendImageMessage } from './sender';
 import { getPlatformSettings, getPlatformBranding } from './platformBranding';
-import { createPaymentRequest } from '../payments/ozow';
+import { createPaymentRequest } from '../payments/payfast';
+// import { createPaymentRequest } from '../payments/ozow'; // replaced by PayFast
 import { db } from '../../lib/db';
 import { handleAddressActions } from './customerAddress';
 

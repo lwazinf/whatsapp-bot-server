@@ -2,7 +2,8 @@ import { sendTextMessage, sendListMessage, sendImageMessage, sendButtons, sendIn
 import { formatCurrency, buildMerchantWelcome } from './messageTemplates';
 import { getPlatformBranding } from './platformBranding';
 import { setCustomerLastMerchant, upsertMerchantCustomer } from './merchantCustomers';
-import { createPaymentRequest } from '../payments/ozow';
+import { createPaymentRequest } from '../payments/payfast';
+// import { createPaymentRequest } from '../payments/ozow'; // replaced by PayFast
 import { db } from '../../lib/db';
 import { getCustomerAddress, startAddressFlow } from './customerAddress';
 import { log, AuditAction } from './auditLog';

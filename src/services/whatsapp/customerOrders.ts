@@ -1,7 +1,8 @@
 import { sendTextMessage, sendButtons } from './sender';
 import { formatCurrency } from './messageTemplates';
 import { getPlatformBranding } from './platformBranding';
-import { createPaymentRequest } from '../payments/ozow';
+import { createPaymentRequest } from '../payments/payfast';
+// import { createPaymentRequest } from '../payments/ozow'; // replaced by PayFast
 import { db } from '../../lib/db';
 import { Prisma } from '@prisma/client';
 import { log, AuditAction } from './auditLog';
