@@ -11,15 +11,32 @@ import { createPaymentRequest } from '../payments/ozow';
 import { db } from '../../lib/db';
 import { handleAddressActions } from './customerAddress';
 
+// Per-user processing queue — serializes concurrent webhook calls for the same
+// wa_id so session reads/writes never race and messages always arrive in order.
+const userQueues = new Map<string, Promise<void>>();
+
+const enqueueForUser = (from: string, task: () => Promise<void>): void => {
+    const prev = userQueues.get(from) ?? Promise.resolve();
+    const next = prev.then(task).catch(() => {/* errors handled inside task */});
+    userQueues.set(from, next);
+    // Clean up the map entry once the chain drains to avoid memory growth
+    next.finally(() => {
+        if (userQueues.get(from) === next) userQueues.delete(from);
+    });
+};
+
 /**
  * Main entry point for all incoming WhatsApp messages
  */
-export const handleIncomingMessage = async (message: any): Promise<void> => {
+export const handleIncomingMessage = (message: any): void => {
     if (!message || !message.from) {
         console.error('❌ Invalid message received: Missing from number');
         return;
     }
+    enqueueForUser(message.from, () => processMessage(message));
+};
 
+const processMessage = async (message: any): Promise<void> => {
     const from = message.from;
 
     // Extract user input from various possible WhatsApp interactive types

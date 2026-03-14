@@ -9,9 +9,9 @@ const getConfig = () => {
     return { apiUrl, apiKey };
 };
 
-// Rate limiting settings
+// Rate limiting settings — per-user so one user's burst doesn't delay others
 const MESSAGE_DELAY_MS = 150;
-let lastMessageTime = 0;
+const lastMessageTimeByUser = new Map<string, number>();
 
 // ============ CORE SEND FUNCTION ============
 
@@ -20,13 +20,16 @@ let lastMessageTime = 0;
  */
 const sendMessage = async (payload: any): Promise<boolean> => {
     try {
-        // Enforce a small delay between messages to prevent rate-limiting/out-of-order delivery
+        // Enforce a per-user delay to prevent rate-limiting/out-of-order delivery
+        // without blocking messages destined for other users
+        const recipient = String(payload.to || '');
         const now = Date.now();
-        const timeSinceLastMessage = now - lastMessageTime;
+        const lastTime = lastMessageTimeByUser.get(recipient) ?? 0;
+        const timeSinceLastMessage = now - lastTime;
         if (timeSinceLastMessage < MESSAGE_DELAY_MS) {
             await new Promise(resolve => setTimeout(resolve, MESSAGE_DELAY_MS - timeSinceLastMessage));
         }
-        lastMessageTime = Date.now();
+        lastMessageTimeByUser.set(recipient, Date.now());
 
         const { apiUrl, apiKey } = getConfig();
         const response = await axios.post(`${apiUrl}/messages`, payload, {
