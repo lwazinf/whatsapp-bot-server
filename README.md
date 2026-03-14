@@ -1,86 +1,176 @@
-# 🚀 Omeru WhatsApp Commerce Platform
+# Omeru — WhatsApp Commerce Platform
 
-WhatsApp-native multi-merchant shopping platform. Customers browse stores, add to cart, and pay — all without leaving WhatsApp.
+A multi-merchant shopping platform that runs entirely inside WhatsApp. Customers browse stores, add to cart, and pay without leaving the app. Merchants manage their entire store through conversation. No app downloads, no accounts, no friction.
 
-## ✨ Features
+---
 
-### Customer
-- 🛍️ Browse stores by category (Food, Fashion, Beauty, Tech, Home, Services)
-- 🛒 Cart with multi-item checkout and quantity editing
-- ⚡ Buy Now — single-tap purchase bypassing cart
-- ❤️ Wishlist
-- 📍 Saved delivery address (location pin or typed, geocoded via Nominatim)
-- 📦 Order tracking and payment retry
+## How It Works
 
-### Merchant
-- 🏪 Full store management via WhatsApp: profile, hours, logo, welcome image
-- 📦 Product/category/variant inventory management
-- 🍳 Kitchen view: new → ready → collected order flow + order cancellation
-- 👥 Multi-owner support with invite codes
-- 🔗 Change @handle and @admin_handle post-onboarding
-- 📢 Browse visibility toggle
+Three distinct profiles share the same WhatsApp number space:
 
-### Platform Admin
-- ➕ Invite new stores (with custom handle support and conflict detection)
-- 🟢 Activate stores from ONBOARDING → ACTIVE
-- 🔴 Suspend / unsuspend stores (merchant notified)
-- 👥 Revoke admin access per store
-- 📋 Full invite history
+| Profile | Who | Access |
+|---|---|---|
+| **Customer** | Anyone who messages the bot | Default for all users |
+| **Merchant** | Invited store owners & staff | After invite + onboarding |
+| **Platform Admin** | Defined by `PLATFORM_ADMIN_NUMBERS` env var | Full platform visibility |
 
-### Payments
-- 💳 Ozow payment gateway (direct link in chat)
-- ⏱️ Stale order alerts at 60 min, auto-cancel at 75 min
+Type `SwitchOmeru` to switch between profiles you have access to.
 
-## 🛠️ Tech Stack
+---
 
-- **Server:** Node.js + Express + TypeScript (`npx tsx`)
-- **Database:** PostgreSQL via Prisma ORM (Supabase)
-- **Cache:** Upstash Redis
-- **Images:** Cloudflare R2
-- **WhatsApp:** 360Dialog API (`D360-API-KEY` header)
-- **Geocoding:** OpenStreetMap Nominatim (reverse geocode for delivery addresses)
+## Customer Experience
 
-## 📁 Key Files
+**Discovering stores**
+- Browse by category: All · Food & Drink · Fashion · Beauty · Tech · Home · Services
+- Type `@storename` directly to visit any shop
+- Sort products: Newest · Oldest · Price (low/high) · Name (A–Z / Z–A)
 
-| File | Purpose |
+**Ordering**
+- Add to cart (multi-item) or Buy Now (single-tap checkout)
+- Save a delivery address once — reused on every order
+- Pay via Ozow payment link sent in chat
+
+**Order management**
+- View recent orders via **My Orders**
+- Pay a stale order or cancel before it's accepted
+- Get notified when your order is ready for pickup
+- Leave a star rating after collection — `[1-5] - optional comment`
+
+**Account**
+- Saved delivery address
+- Wishlist
+- Order history
+- Opt out of merchant marketing at any time
+
+---
+
+## Merchant Experience
+
+**Getting started**
+1. Platform admin sends an invite → merchant accepts via WhatsApp or `JOIN XXXXXX` code
+2. Complete 6-step onboarding: shop name → legal name → ID → bank details → hours → terms
+3. Add first product → accept the going-live disclaimer → store is now active
+
+**Daily operations (all via WhatsApp)**
+
+| Area | What you can do |
 |---|---|
-| `src/index.ts` | Entry point |
-| `src/services/whatsapp/handler.ts` | Main message router |
-| `src/services/whatsapp/merchantEngine.ts` | Merchant command routing |
-| `src/services/whatsapp/customerDiscovery.ts` | Browse, cart, buy-now, checkout |
-| `src/services/whatsapp/customerAddress.ts` | Delivery address flow |
-| `src/services/whatsapp/merchantSettings.ts` | Store settings |
-| `src/services/whatsapp/merchantKitchen.ts` | Order management |
-| `src/services/whatsapp/platformAdmin.ts` | Platform admin panel |
-| `src/services/whatsapp/onboardingEngine.ts` | 6-step merchant registration |
-| `src/services/payments/ozow.ts` | Ozow payment integration |
+| **Kitchen** | View new orders, mark ready, mark collected, cancel with customer notification |
+| **Products** | Add, edit, archive products. Set name, price, description, image, category |
+| **Variants** | Add size/colour/SKU/price variants to any product |
+| **Settings** | Bio, logo, welcome image, address, trading hours, support number, welcome message |
+| **Handles** | Change your public `@handle` and admin handle post-onboarding |
+| **Team** | Invite co-owners and staff, remove admins |
+| **Broadcast** | Message all opted-in customers at once |
+| **Reviews** | See all customer star ratings and comments in Kitchen → Reviews |
+| **Stats** | Today's orders, revenue, pending count from the dashboard |
 
-## 🚀 Deploy to Railway
+**Order lifecycle**
 
-### 1. Push to GitHub
-
-```bash
-git remote add origin https://github.com/YOUR_USERNAME/whatsapp-bot-server.git
-git push -u origin main
+```
+PENDING → PAID → READY_FOR_PICKUP → COMPLETED
+                                  ↘ CANCELLED
 ```
 
-### 2. Deploy on Railway
+Merchant marks **Ready** → customer notified to collect
+Merchant marks **Collected** → order completed, platform fee logged, customer prompted to rate
 
-1. Go to https://railway.app/ → Login with GitHub
-2. New Project → Deploy from GitHub repo → select this repo
-3. Railway auto-deploys on push
+**Stale order handling**
 
-### 3. Add Environment Variables
+| Time | Event |
+|---|---|
+| 10 min | Merchant alerted (up to 2 alerts) |
+| 60 min | Customer alerted with Pay Now / Delete options |
+| 75 min | Order auto-cancelled, customer notified |
 
-In Railway → Variables → Raw Editor:
+---
+
+## Platform Admin
+
+Access from any number listed in `PLATFORM_ADMIN_NUMBERS` — type `admin`.
+
+**Store management**
+- Invite new stores with optional custom handle
+- View all stores by status: 🟢 Active · 🟡 Onboarding · 🔴 Suspended
+- Activate, suspend, or unsuspend stores
+- Revoke full access or remove individual admins
+
+**Feedback inbox**
+- View merchant feedback messages
+- View customer reviews (legal / operational access)
+
+**Platform stats** (`pa_stats`)
+- Store rankings by revenue and order count
+- Peak activity hours and high-revenue time windows
+- Category performance across all stores
+- Activity by region
+- Single-store drill-down with avg rating, top product, best day
+
+**Invite system**
+- Full invite history with status (pending / accepted / revoked)
+- `JOIN XXXXXX` codes for invitees who haven't messaged the bot before
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Runtime | Node.js + TypeScript (`npx tsx`) |
+| Framework | Express |
+| Database | PostgreSQL via Prisma ORM (Supabase) |
+| Cache | Upstash Redis |
+| Image storage | Cloudflare R2 |
+| WhatsApp API | 360Dialog (`D360-API-KEY`) |
+| Payments | Ozow |
+| Geocoding | OpenStreetMap Nominatim |
+
+---
+
+## Project Structure
+
+```
+src/
+├── index.ts                          # Entry point + cron jobs
+└── services/
+    ├── whatsapp/
+    │   ├── handler.ts                # Main message router
+    │   ├── merchantEngine.ts         # Merchant command routing
+    │   ├── merchantDashboard.ts      # Dashboard rendering
+    │   ├── merchantInventory.ts      # Products, categories, variants
+    │   ├── merchantKitchen.ts        # Order management + reviews
+    │   ├── merchantSettings.ts       # Store settings
+    │   ├── customerDiscovery.ts      # Browse, cart, buy-now, checkout
+    │   ├── customerOrders.ts         # Order history, ratings, stale flow
+    │   ├── customerAddress.ts        # Delivery address flow
+    │   ├── onboardingEngine.ts       # 6-step merchant registration
+    │   ├── platformAdmin.ts          # Admin panel + stats
+    │   ├── platformBranding.ts       # Platform-level branding config
+    │   ├── sender.ts                 # WhatsApp API wrappers
+    │   └── messageTemplates.ts       # Shared message formatting
+    └── payments/
+        └── ozow.ts                   # Payment link generation + webhook
+```
+
+---
+
+## Deployment
+
+### 1. Deploy on Railway
+
+1. Push this repo to GitHub
+2. Railway → New Project → Deploy from GitHub repo
+3. Railway auto-deploys on every push
+
+### 2. Environment Variables
 
 ```env
 DATABASE_URL=postgresql://...
-DIRECT_URL=postgresql://...          # Supabase direct URL
-WHATSAPP_API_KEY=...                 # 360Dialog D360-API-KEY
+DIRECT_URL=postgresql://...
+WHATSAPP_API_KEY=...
 WHATSAPP_API_URL=https://waba.360dialog.io
 ADMIN_WHATSAPP_NUMBER=27741234567
-PLATFORM_ADMIN_NUMBERS=27741234567   # comma-separated
+PLATFORM_ADMIN_NUMBERS=27741234567
 R2_ACCESS_KEY_ID=...
 R2_SECRET_ACCESS_KEY=...
 R2_BUCKET_NAME=...
@@ -92,55 +182,44 @@ OZOW_PRIVATE_KEY=...
 OZOW_API_KEY=...
 ```
 
-### 4. Configure Webhook
+### 3. Configure Webhook
 
-In 360Dialog dashboard:
-- Webhooks → Add: `https://your-app.up.railway.app/api/whatsapp/webhook`
-
-### 5. Run Database Migration
-
-After first deploy, run `migrate-new-fields.sql` against your Supabase database (via SQL editor):
-
-```sql
--- adds fields not yet in the managed migration history
-ALTER TABLE "UserSession" ADD COLUMN IF NOT EXISTS "has_seen_onboarding" BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE "MerchantCustomer" ADD COLUMN IF NOT EXISTS "has_seen_welcome" BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE "Merchant" ADD COLUMN IF NOT EXISTS "store_category" TEXT;
-ALTER TABLE "Order" ADD COLUMN IF NOT EXISTS "customer_alerted_at" TIMESTAMP;
-ALTER TABLE "UserSession" ADD COLUMN IF NOT EXISTS "delivery_address" TEXT;
+In the 360Dialog dashboard, add:
+```
+https://your-app.up.railway.app/api/whatsapp/webhook
 ```
 
-## 📱 How It Works
+### 4. Database Migration
 
-### Customer flow
-1. Message the bot → Omeru welcome screen
-2. **Browse Stores** → category filter → store list → product cards
-3. **Add to Cart** or **Buy Now** → address shown in checkout → Ozow payment link
-4. Order tracked in **My Orders**; **My Address** saves delivery info for next time
+Run `migrate-new-fields.sql` against your Supabase database after first deploy (SQL editor):
 
-### Merchant flow
-1. Admin invites store → merchant types `JOIN XXXXXX` or accepts WhatsApp invite
-2. Completes 6-step onboarding via `@{store}_admin`
-3. Admin activates store → `menu` to manage products, orders, settings
+```sql
+ALTER TABLE "UserSession"      ADD COLUMN IF NOT EXISTS "has_seen_onboarding" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "UserSession"      ADD COLUMN IF NOT EXISTS "delivery_address" TEXT;
+ALTER TABLE "MerchantCustomer" ADD COLUMN IF NOT EXISTS "has_seen_welcome" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "Merchant"         ADD COLUMN IF NOT EXISTS "store_category" TEXT;
+ALTER TABLE "Order"            ADD COLUMN IF NOT EXISTS "customer_alerted_at" TIMESTAMP;
+```
 
-### Platform Admin
-- Message `admin` from a number in `PLATFORM_ADMIN_NUMBERS`
-- Stores → tap store → Activate / Suspend
-- Invite Store: `Store Name | optionalhandle` → owner's phone number
+---
 
-## 🔑 User Commands
+## Key Commands
 
-| Command | Action |
-|---|---|
-| `hi` / `hello` | Home screen |
-| `@{handle}` | Open a store |
-| `@{store}_admin` | Open merchant dashboard |
-| `JOIN XXXXXX` | Accept invite by code |
-| `admin` | Platform admin panel (admins only) |
-| `switch` / `SwitchOmeru` | Switch between customer/merchant/admin mode |
-| `HelpOmeru` | Help menu |
-| `stop` | Opt out of merchant marketing |
+| Command | Who | What it does |
+|---|---|---|
+| `hi` | Customer | Home screen |
+| `@storename` | Customer | Open a store directly |
+| `SwitchOmeru` | Anyone | Switch between available profiles |
+| `menu` | Merchant | Open merchant dashboard |
+| `admin` | Platform Admin | Open admin panel |
+| `JOIN XXXXXX` | Invited merchant | Accept invite by code |
+| `stop` | Customer | Opt out of marketing from last store visited |
 
-## 📄 License
+---
 
-MIT
+## Notes
+
+- WhatsApp interactive messages (buttons/lists) only work within a 24-hour customer-initiated window
+- Platform fee: **7%** of each completed order, logged on collection
+- Browse visibility is per-store — hidden stores are still accessible via `@handle`
+- Merchants can manage multiple stores; each appears as a separate option in `SwitchOmeru`
