@@ -273,9 +273,14 @@ const sendStoreProductPage = async (from: string, merchantHandle: string, page: 
         const stockBadge = product.is_in_stock ? '✅ In Stock' : '❌ Out of Stock';
         const priceStr = formatCurrency(displayPrice, { merchant, merchantBranding, platform: platformBranding });
 
+        const variantLine = product.variants.length > 1
+            ? `_(${product.variants.length} variants available)_`
+            : '';
+
         const caption = [
             `🛍️ *${product.name}*`,
             product.description ? product.description.substring(0, 100) : '',
+            variantLine,
             `💰 ${priceStr}  •  ${stockBadge}`
         ].filter(Boolean).join('\n');
 

@@ -166,6 +166,14 @@ browse_shops
 - Sort: `ssort_{handle}` → list menu → `spf_{handle}.{sortCode}.{page}`
   - Sort codes: `new` · `old` · `lp` · `hp` · `az` · `za`
 
+### Product Card Caption
+```
+🛍️ Product Name
+Description (truncated to 100 chars)
+_(3 variants available)_   ← shown only when product has >1 variant
+💰 R 99.00  •  ✅ In Stock
+```
+
 ### Product Card Buttons
 | State | Buttons |
 |-------|---------|
