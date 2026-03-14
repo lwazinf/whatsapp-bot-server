@@ -2,7 +2,7 @@ import { MerchantStatus } from '@prisma/client';
 import { handleMerchantAction } from './merchantEngine';
 import { handleOnboardingAction } from './onboardingEngine';
 import { handleCustomerDiscovery } from './customerDiscovery';
-import { handleCustomerOrders, handleFeedbackCommentState } from './customerOrders';
+import { handleCustomerOrders, handleFeedbackTextState } from './customerOrders';
 import { handlePlatformAdminActions } from './platformAdmin';
 import { handleHelpCommand } from './helpEngine';
 import { sendTextMessage, sendButtons, sendListMessage, sendImageMessage } from './sender';
@@ -323,9 +323,9 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
             return;
         }
 
-        // Feedback comment text input state
-        if (session.active_prod_id?.startsWith('feedback_comment_')) {
-            await handleFeedbackCommentState(from, input);
+        // Feedback text input state
+        if (session.active_prod_id?.startsWith('feedback_text_')) {
+            await handleFeedbackTextState(from, input);
             return;
         }
 

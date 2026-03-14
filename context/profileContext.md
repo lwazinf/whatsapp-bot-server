@@ -170,7 +170,6 @@ browse_shops
 ```
 🛍️ Product Name
 Description (truncated to 100 chars)
-_(3 variants available)_   ← shown only when product has >1 variant
 💰 R 99.00  •  ✅ In Stock
 ```
 

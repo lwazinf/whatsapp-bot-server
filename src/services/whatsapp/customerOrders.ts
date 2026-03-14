@@ -1,4 +1,4 @@
-import { sendTextMessage, sendButtons, sendListMessage } from './sender';
+import { sendTextMessage, sendButtons } from './sender';
 import { formatCurrency } from './messageTemplates';
 import { getPlatformBranding } from './platformBranding';
 import { createPaymentRequest } from '../payments/ozow';
@@ -182,13 +182,10 @@ export const handleCustomerOrders = async (from: string, input: string): Promise
         return;
     }
 
-    // ── Customer feedback — start (show rating) ───────────────────────────────
+    // ── Customer feedback — start ──────────────────────────────────────────────
     if (input.startsWith('cfb_start_')) {
         const orderId = input.replace('cfb_start_', '');
-        const order = await db.order.findUnique({
-            where: { id: orderId },
-            include: { merchant: true }
-        });
+        const order = await db.order.findUnique({ where: { id: orderId }, include: { merchant: true } });
 
         if (!order || order.customer_id !== from) {
             await sendTextMessage(from, '❌ Order not found.');
@@ -203,77 +200,42 @@ export const handleCustomerOrders = async (from: string, input: string): Promise
             return;
         }
 
-        await sendListMessage(
-            from,
-            `⭐ *Rate your experience with ${order.merchant?.trading_name || 'the store'}*\n\nOrder #${orderId.slice(-5)}`,
-            '⭐ Choose Rating',
-            [{
-                title: 'Rating',
-                rows: [
-                    { id: `cfb_r5_${orderId}`, title: '⭐⭐⭐⭐⭐  Excellent',   description: 'Couldn\'t be happier!' },
-                    { id: `cfb_r4_${orderId}`, title: '⭐⭐⭐⭐  Good',         description: 'Happy overall' },
-                    { id: `cfb_r3_${orderId}`, title: '⭐⭐⭐  Average',       description: 'It was okay' },
-                    { id: `cfb_r2_${orderId}`, title: '⭐⭐  Below Average',  description: 'Not what I expected' },
-                    { id: `cfb_r1_${orderId}`, title: '⭐  Poor',            description: 'Very disappointed' }
-                ]
-            }]
+        await db.userSession.update({
+            where: { wa_id: from },
+            data: { active_prod_id: `feedback_text_${orderId}`, state: null }
+        });
+
+        await sendTextMessage(from,
+            `⭐ *Rate your experience with ${order.merchant?.trading_name || 'the store'}*\n\n` +
+            `Reply with a number *1–5*, and optionally add a comment after a dash:\n\n` +
+            `• \`5\`\n` +
+            `• \`4 - Great food, fast delivery\`\n` +
+            `• \`2 - Order arrived cold\``
         );
-        return;
-    }
-
-    // ── Customer feedback — rating selected ───────────────────────────────────
-    if (input.match(/^cfb_r[1-5]_/)) {
-        const match = input.match(/^cfb_r([1-5])_(.+)$/);
-        if (!match) { await sendTextMessage(from, '⚠️ Invalid rating.'); return; }
-
-        const rating = parseInt(match[1]);
-        const orderId = match[2];
-
-        const order = await db.order.findUnique({ where: { id: orderId }, include: { merchant: true } });
-        if (!order || order.customer_id !== from) { await sendTextMessage(from, '❌ Order not found.'); return; }
-
-        // Low rating (< 3) — ask for optional comment
-        if (rating < 3) {
-            await db.userSession.update({
-                where: { wa_id: from },
-                data: {
-                    active_prod_id: `feedback_comment_${orderId}`,
-                    state: JSON.stringify({ rating, orderId, merchant_id: order.merchant_id, merchant_name: order.merchant?.trading_name })
-                }
-            });
-            const stars = '⭐'.repeat(rating);
-            await sendButtons(from,
-                `${stars} *${rating}/5*\n\nSorry to hear that. What could *${order.merchant?.trading_name || 'the store'}* do better? _(optional)_`,
-                [{ id: `cfb_skip_comment_${orderId}`, title: '⏩ Skip' }]
-            );
-            return;
-        }
-
-        // High rating (≥ 3) — save immediately, no comment needed
-        await saveFeedback(from, orderId, rating, null, null);
-        return;
-    }
-
-    // ── Customer feedback — skip comment ─────────────────────────────────────
-    if (input.startsWith('cfb_skip_comment_')) {
-        const orderId = input.replace('cfb_skip_comment_', '');
-        const sessionRaw = await db.userSession.findUnique({ where: { wa_id: from }, select: { state: true } });
-        const payload = sessionRaw?.state ? JSON.parse(sessionRaw.state) : null;
-
-        await saveFeedback(from, orderId, payload?.rating ?? 0, null, payload);
         return;
     }
 
     await sendTextMessage(from, '⚠️ Unknown action.');
 };
 
-// ── Feedback comment state handler ────────────────────────────────────────────
-export const handleFeedbackCommentState = async (from: string, comment: string): Promise<void> => {
-    const sessionRaw = await db.userSession.findUnique({ where: { wa_id: from }, select: { active_prod_id: true, state: true } });
-    const orderId = sessionRaw?.active_prod_id?.replace('feedback_comment_', '') ?? '';
-    const payload = sessionRaw?.state ? JSON.parse(sessionRaw.state) : null;
+// ── Feedback text state handler (single reply: "4 - Great service") ───────────
+export const handleFeedbackTextState = async (from: string, input: string): Promise<void> => {
+    const sessionRaw = await db.userSession.findUnique({ where: { wa_id: from }, select: { active_prod_id: true } });
+    const orderId = sessionRaw?.active_prod_id?.replace('feedback_text_', '') ?? '';
 
-    await saveFeedback(from, orderId, payload?.rating ?? 0, comment === 'skip' ? null : comment, payload);
+    const dashIdx = input.indexOf('-');
+    const ratingStr = dashIdx !== -1 ? input.substring(0, dashIdx).trim() : input.trim();
+    const comment   = dashIdx !== -1 ? input.substring(dashIdx + 1).trim() || null : null;
+    const rating    = parseInt(ratingStr);
+
+    if (isNaN(rating) || rating < 1 || rating > 5) {
+        await sendTextMessage(from,
+            '⚠️ Please reply with a number *1–5*.\n\nExample: `4 - Great service!`'
+        );
+        return;
+    }
+
+    await saveFeedback(from, orderId, rating, comment, null);
 };
 
 // ── Save feedback to AuditLog + notify merchant ───────────────────────────────
