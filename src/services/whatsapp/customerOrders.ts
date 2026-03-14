@@ -1,8 +1,9 @@
-import { sendTextMessage, sendButtons } from './sender';
+import { sendTextMessage, sendButtons, sendListMessage } from './sender';
 import { formatCurrency } from './messageTemplates';
 import { getPlatformBranding } from './platformBranding';
 import { createPaymentRequest } from '../payments/ozow';
 import { db } from '../../lib/db';
+import { Prisma } from '@prisma/client';
 
 export const handleCustomerOrders = async (from: string, input: string): Promise<void> => {
     if (input === 'c_my_orders') {
@@ -84,6 +85,19 @@ export const handleCustomerOrders = async (from: string, input: string): Promise
         }
 
         await sendButtons(from, msg, actionBtns.slice(0, 3));
+
+        // Optional rating nav bubble — shown below the main order card for completed orders only
+        if (order.status === 'COMPLETED') {
+            const alreadyRated = await db.auditLog.findFirst({
+                where: { action: 'CUSTOMER_FEEDBACK', entity_id: order.id }
+            });
+            if (!alreadyRated) {
+                await sendButtons(from,
+                    `⭐ _How was your order from *${order.merchant?.trading_name || 'the store'}*?_`,
+                    [{ id: `cfb_start_${order.id}`, title: '⭐ Rate Experience' }]
+                );
+            }
+        }
         return;
     }
 
@@ -168,7 +182,157 @@ export const handleCustomerOrders = async (from: string, input: string): Promise
         return;
     }
 
+    // ── Customer feedback — start (show rating) ───────────────────────────────
+    if (input.startsWith('cfb_start_')) {
+        const orderId = input.replace('cfb_start_', '');
+        const order = await db.order.findUnique({
+            where: { id: orderId },
+            include: { merchant: true }
+        });
+
+        if (!order || order.customer_id !== from) {
+            await sendTextMessage(from, '❌ Order not found.');
+            return;
+        }
+
+        const existing = await db.auditLog.findFirst({ where: { action: 'CUSTOMER_FEEDBACK', entity_id: orderId } });
+        if (existing) {
+            await sendButtons(from, '✅ You have already left feedback for this order.', [
+                { id: `view_order_${orderId}`, title: '📋 View Order' }
+            ]);
+            return;
+        }
+
+        await sendListMessage(
+            from,
+            `⭐ *Rate your experience with ${order.merchant?.trading_name || 'the store'}*\n\nOrder #${orderId.slice(-5)}`,
+            '⭐ Choose Rating',
+            [{
+                title: 'Rating',
+                rows: [
+                    { id: `cfb_r5_${orderId}`, title: '⭐⭐⭐⭐⭐  Excellent',   description: 'Couldn\'t be happier!' },
+                    { id: `cfb_r4_${orderId}`, title: '⭐⭐⭐⭐  Good',         description: 'Happy overall' },
+                    { id: `cfb_r3_${orderId}`, title: '⭐⭐⭐  Average',       description: 'It was okay' },
+                    { id: `cfb_r2_${orderId}`, title: '⭐⭐  Below Average',  description: 'Not what I expected' },
+                    { id: `cfb_r1_${orderId}`, title: '⭐  Poor',            description: 'Very disappointed' }
+                ]
+            }]
+        );
+        return;
+    }
+
+    // ── Customer feedback — rating selected ───────────────────────────────────
+    if (input.match(/^cfb_r[1-5]_/)) {
+        const match = input.match(/^cfb_r([1-5])_(.+)$/);
+        if (!match) { await sendTextMessage(from, '⚠️ Invalid rating.'); return; }
+
+        const rating = parseInt(match[1]);
+        const orderId = match[2];
+
+        const order = await db.order.findUnique({ where: { id: orderId }, include: { merchant: true } });
+        if (!order || order.customer_id !== from) { await sendTextMessage(from, '❌ Order not found.'); return; }
+
+        // Low rating (< 3) — ask for optional comment
+        if (rating < 3) {
+            await db.userSession.update({
+                where: { wa_id: from },
+                data: {
+                    active_prod_id: `feedback_comment_${orderId}`,
+                    state: JSON.stringify({ rating, orderId, merchant_id: order.merchant_id, merchant_name: order.merchant?.trading_name })
+                }
+            });
+            const stars = '⭐'.repeat(rating);
+            await sendButtons(from,
+                `${stars} *${rating}/5*\n\nSorry to hear that. What could *${order.merchant?.trading_name || 'the store'}* do better? _(optional)_`,
+                [{ id: `cfb_skip_comment_${orderId}`, title: '⏩ Skip' }]
+            );
+            return;
+        }
+
+        // High rating (≥ 3) — save immediately, no comment needed
+        await saveFeedback(from, orderId, rating, null, null);
+        return;
+    }
+
+    // ── Customer feedback — skip comment ─────────────────────────────────────
+    if (input.startsWith('cfb_skip_comment_')) {
+        const orderId = input.replace('cfb_skip_comment_', '');
+        const sessionRaw = await db.userSession.findUnique({ where: { wa_id: from }, select: { state: true } });
+        const payload = sessionRaw?.state ? JSON.parse(sessionRaw.state) : null;
+
+        await saveFeedback(from, orderId, payload?.rating ?? 0, null, payload);
+        return;
+    }
+
     await sendTextMessage(from, '⚠️ Unknown action.');
+};
+
+// ── Feedback comment state handler ────────────────────────────────────────────
+export const handleFeedbackCommentState = async (from: string, comment: string): Promise<void> => {
+    const sessionRaw = await db.userSession.findUnique({ where: { wa_id: from }, select: { active_prod_id: true, state: true } });
+    const orderId = sessionRaw?.active_prod_id?.replace('feedback_comment_', '') ?? '';
+    const payload = sessionRaw?.state ? JSON.parse(sessionRaw.state) : null;
+
+    await saveFeedback(from, orderId, payload?.rating ?? 0, comment === 'skip' ? null : comment, payload);
+};
+
+// ── Save feedback to AuditLog + notify merchant ───────────────────────────────
+const saveFeedback = async (
+    from: string,
+    orderId: string,
+    rating: number,
+    comment: string | null,
+    _payload: Record<string, any> | null
+): Promise<void> => {
+    await db.userSession.update({ where: { wa_id: from }, data: { active_prod_id: null, state: null } });
+
+    const order = await db.order.findUnique({
+        where: { id: orderId },
+        include: { merchant: true, order_items: { include: { product: true } } }
+    });
+
+    if (!order) { await sendTextMessage(from, '❌ Order not found.'); return; }
+
+    const merchantId = order.merchant_id;
+    const merchantName = order.merchant?.trading_name || 'Store';
+
+    await db.auditLog.create({
+        data: {
+            actor_wa_id: from,
+            action: 'CUSTOMER_FEEDBACK',
+            entity_type: 'Order',
+            entity_id: orderId,
+            metadata_json: {
+                order_id: orderId,
+                merchant_id: merchantId,
+                merchant_name: merchantName,
+                customer_wa_id: from,
+                rating,
+                comment: comment ?? null,
+                order_total: order.total,
+                feedback_submitted_at: new Date().toISOString()
+            } as Prisma.InputJsonValue
+        }
+    });
+
+    const stars = '⭐'.repeat(rating);
+    await sendButtons(from,
+        `${stars} *Feedback submitted!*\n\nThank you — your review helps ${merchantName} improve. 🙏`,
+        [
+            { id: `view_order_${orderId}`, title: '📋 View Order' },
+            { id: 'c_my_orders', title: '📦 My Orders' }
+        ]
+    );
+
+    // Notify merchant of low-rating (≤ 2 stars)
+    if (rating <= 2 && order.merchant?.wa_id) {
+        const stars_display = '⭐'.repeat(rating);
+        await sendButtons(
+            order.merchant.wa_id,
+            `⚠️ *Low Rating on Order #${orderId.slice(-5)}*\n\n${stars_display} ${rating}/5\n${comment ? `"${comment}"` : '(no comment)'}`,
+            [{ id: `view_kitchen_${orderId}`, title: '📋 View Order' }, { id: 'm_reviews', title: '⭐ All Reviews' }]
+        );
+    }
 };
 
 export const sendStaleOrderAlertToCustomer = async (orderId: string): Promise<void> => {

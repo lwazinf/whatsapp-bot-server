@@ -4,10 +4,35 @@ import { getPlatformBranding } from './platformBranding';
 import { setCustomerLastMerchant, upsertMerchantCustomer } from './merchantCustomers';
 import { createPaymentRequest } from '../payments/ozow';
 import { db } from '../../lib/db';
-import { getCustomerAddress } from './customerAddress';
+import { getCustomerAddress, startAddressFlow } from './customerAddress';
 
 const STORE_PROD_PAGE_SIZE = 3;
 const BROWSE_PAGE_SIZE = 5;
+
+// ── Product sort helpers ───────────────────────────────────────────────────────
+
+const SORT_OPTIONS = [
+    { code: 'new', label: 'Newest First',   shortLabel: '🆕 Newest'   },
+    { code: 'old', label: 'Oldest First',   shortLabel: '⏳ Oldest'   },
+    { code: 'lp',  label: 'Price: Low → High', shortLabel: '💸 Price ↑' },
+    { code: 'hp',  label: 'Price: High → Low', shortLabel: '💰 Price ↓' },
+    { code: 'az',  label: 'A → Z',          shortLabel: '🔤 A→Z'      },
+    { code: 'za',  label: 'Z → A',          shortLabel: '🔤 Z→A'      },
+];
+
+const getSortShortLabel = (code: string): string =>
+    SORT_OPTIONS.find(s => s.code === code)?.shortLabel ?? '🆕 Newest';
+
+const getSortOrderBy = (code: string): any => {
+    switch (code) {
+        case 'old': return { createdAt: 'asc' };
+        case 'lp':  return { price: 'asc' };
+        case 'hp':  return { price: 'desc' };
+        case 'az':  return { name: 'asc' };
+        case 'za':  return { name: 'desc' };
+        default:    return { createdAt: 'desc' };
+    }
+};
 
 // Platform-level store categories for browsing
 export const STORE_CATEGORIES = [
@@ -166,7 +191,7 @@ const processBuyNow = async (
 
 // ── Store product page ────────────────────────────────────────────────────────
 
-const sendStoreProductPage = async (from: string, merchantHandle: string, page: number, platformBranding: any): Promise<void> => {
+const sendStoreProductPage = async (from: string, merchantHandle: string, page: number, platformBranding: any, sortCode?: string): Promise<void> => {
     const merchant = await db.merchant.findFirst({
         where: { handle: merchantHandle.toLowerCase(), status: 'ACTIVE' }
     });
@@ -215,7 +240,7 @@ const sendStoreProductPage = async (from: string, merchantHandle: string, page: 
         db.product.findMany({
             where: { merchant_id: merchant.id, status: 'ACTIVE' },
             include: { variants: true },
-            orderBy: { createdAt: 'desc' },
+            orderBy: getSortOrderBy(sortCode || 'new'),
             take: STORE_PROD_PAGE_SIZE,
             skip
         }),
@@ -266,8 +291,8 @@ const sendStoreProductPage = async (from: string, merchantHandle: string, page: 
         } else {
             buttons = [
                 { id: `add_cart_prod_${product.id}`, title: '🛒 Add to Cart' },
-                { id: `wish_prod_${product.id}`, title: '❤️ Wishlist' },
-                { id: `buy_now_prod_${product.id}`, title: '⚡ Buy Now' }
+                { id: `buy_now_prod_${product.id}`, title: '⚡ Buy Now' },
+                { id: `prod_${product.id}`, title: '📖 More' }
             ];
         }
 
@@ -278,51 +303,80 @@ const sendStoreProductPage = async (from: string, merchantHandle: string, page: 
         }
     }
 
-    // Navigation — always include ← Browse
+    // Navigation — sort-aware pagination
     const cart = await getCart(from);
     const count = cartItemCount(cart);
     const hasPrev = page > 1;
     const hasNext = page < totalPages;
 
+    const prevId = sortCode ? `spf_${merchantHandle}.${sortCode}.${page - 1}` : `sp_${merchantHandle}_${page - 1}`;
+    const nextId = sortCode ? `spf_${merchantHandle}.${sortCode}.${page + 1}` : `sp_${merchantHandle}_${page + 1}`;
+
     const browseBtn = { id: 'browse_shops', title: '← Browse' };
+    // Sort button: if sorted, resets to unsorted page 1; if not sorted, opens sort menu
+    const sortBtn = sortCode
+        ? { id: `sp_${merchantHandle}_1`, title: getSortShortLabel(sortCode).substring(0, 20) + ' ✕' }
+        : { id: `ssort_${merchantHandle}`, title: '🔀 Sort' };
+
     const navBtns: Array<{ id: string; title: string }> = [];
 
     if (!hasPrev && !hasNext) {
-        // Single page store
+        // Single page store — always room for sort + cart
         navBtns.push(browseBtn);
+        navBtns.push(sortBtn);
         if (count > 0) navBtns.push({ id: 'c_cart', title: `🛒 Cart (${count})` });
     } else if (!hasPrev) {
-        // Page 1 of many
-        if (count > 0) navBtns.push({ id: 'c_cart', title: `🛒 Cart (${count})` });
+        // Page 1 of many — sort replaces cart button
         navBtns.push(browseBtn);
-        navBtns.push({ id: `sp_${merchantHandle}_${page + 1}`, title: 'Next ▶' });
+        navBtns.push(sortBtn);
+        navBtns.push({ id: nextId, title: 'Next ▶' });
     } else if (hasNext) {
-        // Middle page
-        navBtns.push({ id: `sp_${merchantHandle}_${page - 1}`, title: '◀ Prev' });
+        // Middle page — no room for sort
+        navBtns.push({ id: prevId, title: '◀ Prev' });
         navBtns.push(browseBtn);
-        navBtns.push({ id: `sp_${merchantHandle}_${page + 1}`, title: 'Next ▶' });
+        navBtns.push({ id: nextId, title: 'Next ▶' });
     } else {
-        // Last page
-        navBtns.push({ id: `sp_${merchantHandle}_${page - 1}`, title: '◀ Prev' });
+        // Last page — sort replaces cart button
+        navBtns.push({ id: prevId, title: '◀ Prev' });
         navBtns.push(browseBtn);
-        if (count > 0) navBtns.push({ id: 'c_cart', title: `🛒 Cart (${count})` });
+        navBtns.push(sortBtn);
     }
 
-    const navText = `📄 Page ${page} of ${totalPages}  •  ${merchant.trading_name}`;
+    const sortLabel = sortCode ? ` • ${getSortShortLabel(sortCode)}` : '';
+    const navText = `📄 Page ${page} of ${totalPages}  •  ${merchant.trading_name}${sortLabel}`;
     await sendButtons(from, navText, navBtns.slice(0, 3));
 };
 
 // ── Browse: category selection ────────────────────────────────────────────────
 
 const sendCategorySelection = async (from: string): Promise<void> => {
-    const rows = [
-        { id: 'bcat_all', title: '🛒 All Stores', description: 'Browse every shop' },
-        ...STORE_CATEGORIES.map(c => ({
-            id: `bcat_${c.slug}`,
-            title: `${c.emoji} ${c.label}`,
-            description: ''
-        }))
+    // Only show categories that have at least one active, browse-visible store
+    const storesWithCats = await (db.merchant as any).findMany({
+        where: { status: 'ACTIVE', show_in_browse: true, store_category: { not: null } },
+        select: { store_category: true },
+        distinct: ['store_category']
+    });
+    const activeSlugs = new Set<string>(
+        storesWithCats.map((m: any) => m.store_category).filter(Boolean)
+    );
+    const totalStores = await (db.merchant as any).count({
+        where: { status: 'ACTIVE', show_in_browse: true }
+    });
+
+    if (totalStores === 0) {
+        await sendTextMessage(from, '🔍 No stores available right now. Check back soon!\n\n_Tip: Type @handle to visit a store directly._');
+        return;
+    }
+
+    const rows: Array<{ id: string; title: string; description: string }> = [
+        { id: 'bcat_all', title: '🛒 All Stores', description: `Browse all ${totalStores} shop${totalStores !== 1 ? 's' : ''}` }
     ];
+    for (const cat of STORE_CATEGORIES) {
+        if (activeSlugs.has(cat.slug)) {
+            rows.push({ id: `bcat_${cat.slug}`, title: `${cat.emoji} ${cat.label}`, description: '' });
+        }
+    }
+
     await sendListMessage(from,
         '🏪 *Browse Stores*\n\nChoose a category, or type *@handle* to visit a shop directly.',
         '🏪 Browse',
@@ -449,6 +503,28 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
         }
         // Non-numeric — clear state and fall through to normal routing
         await db.userSession.update({ where: { wa_id: from }, data: { active_prod_id: null } });
+    }
+
+    // ── Buy Now address resume (after address was saved via ADDR_FLOW) ─────────
+    if (input.startsWith('resume_bnp_')) {
+        const productId = input.replace('resume_bnp_', '');
+        const addr = await getCustomerAddress(from);
+        const product = await db.product.findUnique({ where: { id: productId }, include: { merchant: true } });
+        if (!product || !product.merchant) { await sendTextMessage(from, '❌ Item no longer available.'); return; }
+        await processBuyNow(from, product.merchant, product.id, product.name, product.price, platformBranding, addr);
+        return;
+    }
+
+    if (input.startsWith('resume_bnv_')) {
+        const variantId = input.replace('resume_bnv_', '');
+        const addr = await getCustomerAddress(from);
+        const variant = await db.productVariant.findUnique({
+            where: { id: variantId },
+            include: { product: { include: { merchant: true } } }
+        });
+        if (!variant || !variant.product?.merchant) { await sendTextMessage(from, '❌ Item no longer available.'); return; }
+        await processBuyNow(from, variant.product.merchant, variant.product_id, variant.product.name, variant.price, platformBranding, addr);
+        return;
     }
 
     // ── View cart ─────────────────────────────────────────────────────────────
@@ -760,6 +836,10 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
         await upsertMerchantCustomer(product.merchant.id, from);
         await setCustomerLastMerchant(from, product.merchant.id);
         const addrBuyNow = await getCustomerAddress(from);
+        if (!addrBuyNow) {
+            await startAddressFlow(from, `resume_bnp_${product.id}`);
+            return;
+        }
         await processBuyNow(from, product.merchant, product.id, product.name, product.price, platformBranding, addrBuyNow);
         return;
     }
@@ -785,6 +865,10 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
         await upsertMerchantCustomer(variant.product.merchant.id, from);
         await setCustomerLastMerchant(from, variant.product.merchant.id);
         const addrVariant = await getCustomerAddress(from);
+        if (!addrVariant) {
+            await startAddressFlow(from, `resume_bnv_${variantId}`);
+            return;
+        }
         await processBuyNow(from, variant.product.merchant, variant.product_id, variant.product.name, variant.price, platformBranding, addrVariant);
         return;
     }
@@ -875,9 +959,14 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
             cart.items.push({ product_id: productId, product_name: product.name, price: product.price, qty: 1 });
         }
         await saveCart(from, cart);
-
-        // Return to store (page 1)
-        await sendStoreProductPage(from, product.merchant.handle, 1, platformBranding);
+        const newCount = cartItemCount(cart);
+        await sendButtons(from,
+            `🛒 *${product.name}* added!\n_${newCount} item${newCount !== 1 ? 's' : ''} in cart_`,
+            [
+                { id: 'c_cart', title: `🛒 Cart (${newCount})` },
+                { id: `sp_${product.merchant.handle}_1`, title: '🛍️ Keep Shopping' }
+            ]
+        );
         return;
     }
 
@@ -928,9 +1017,15 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
             });
         }
         await saveCart(from, cart);
-
-        // Return to store (page 1)
-        await sendStoreProductPage(from, merchant.handle, 1, platformBranding);
+        const newCountV = cartItemCount(cart);
+        const addedLabel = variantLabel ? ` (${variantLabel})` : '';
+        await sendButtons(from,
+            `🛒 *${variant.product.name}${addedLabel}* added!\n_${newCountV} item${newCountV !== 1 ? 's' : ''} in cart_`,
+            [
+                { id: 'c_cart', title: `🛒 Cart (${newCountV})` },
+                { id: `sp_${merchant.handle}_1`, title: '🛍️ Keep Shopping' }
+            ]
+        );
         return;
     }
 
@@ -1074,6 +1169,43 @@ export const handleCustomerDiscovery = async (from: string, input: string): Prom
                     ]
             );
         }
+        return;
+    }
+
+    // ── Sort menu ─────────────────────────────────────────────────────────────
+    if (input.startsWith('ssort_')) {
+        // ssort_{handle} — show sort options as list
+        const handle = input.replace('ssort_', '');
+        await sendListMessage(
+            from,
+            `How would you like to sort *@${handle}*'s products?`,
+            '🔀 Choose Sort',
+            [{
+                title: 'Sort Options',
+                rows: SORT_OPTIONS.map(opt => ({
+                    id:          `spf_${handle}.${opt.code}.1`,
+                    title:       opt.shortLabel,
+                    description: opt.label
+                }))
+            }]
+        );
+        return;
+    }
+
+    // ── Sorted store page ─────────────────────────────────────────────────────
+    if (input.startsWith('spf_')) {
+        // spf_{handle}.{sortCode}.{page}
+        const rest = input.replace('spf_', '');
+        const firstDot = rest.indexOf('.');
+        const lastDot = rest.lastIndexOf('.');
+        if (firstDot === -1 || firstDot === lastDot) {
+            await sendTextMessage(from, '⚠️ Invalid sort link.');
+            return;
+        }
+        const handle = rest.substring(0, firstDot);
+        const sortCode = rest.substring(firstDot + 1, lastDot);
+        const page = parseInt(rest.substring(lastDot + 1)) || 1;
+        await sendStoreProductPage(from, handle, page, platformBranding, sortCode);
         return;
     }
 

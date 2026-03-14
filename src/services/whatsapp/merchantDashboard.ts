@@ -104,14 +104,19 @@ export const showMerchantDashboard = async (to: string, merchant: Merchant): Pro
 
         const kitchenTitle = pendingCount > 0 ? `🍳 Kitchen (${pendingCount})` : '🍳 Kitchen';
 
+        const toggleTitle = merchant.manual_closed ? '🔓 Open Shop' : '🔒 Close Shop';
         await sendButtons(to, card, [
             { id: 'm_kitchen', title: kitchenTitle.substring(0, 20) },
             { id: 'm_inventory', title: '📦 Products' },
-            { id: 'm_stats', title: '📊 Stats' }
+            { id: 'dash_toggle', title: toggleTitle }
         ]);
         await sendButtons(to, '⚡ More:', [
+            { id: 'm_stats', title: '📊 Stats' },
             { id: 'm_broadcast', title: '📣 Broadcast' },
             { id: 'm_settings', title: '🛠️ Settings' }
+        ]);
+        await sendButtons(to, '💬 Got feedback?', [
+            { id: 'm_feedback', title: '💬 Send Feedback' }
         ]);
 
     } catch (error: any) {

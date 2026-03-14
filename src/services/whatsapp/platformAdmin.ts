@@ -37,6 +37,10 @@ export const handlePlatformAdminActions = async (
                 { id: 'pa_invite_history', title: '📋 Invite History' }
             ]
         );
+        await sendButtons(from, '⚙️ More:', [
+            { id: 'pa_feedback', title: '💬 Feedback Inbox' },
+            { id: 'pa_revoke', title: '🗑️ Revoke Access' }
+        ]);
         return;
     }
 
@@ -493,6 +497,104 @@ export const handlePlatformAdminActions = async (
 
         await clearState(from);
         await sendTextMessage(from, `✅ Access revoked for ${ownerWaId} on @${adminHandle}.`);
+        return;
+    }
+
+    // ── Feedback inbox — type selector ───────────────────────────────────────
+    if (input === 'pa_feedback') {
+        const [merchantCount, customerCount] = await Promise.all([
+            db.auditLog.count({ where: { action: 'MERCHANT_FEEDBACK' } }),
+            db.auditLog.count({ where: { action: 'CUSTOMER_FEEDBACK' } })
+        ]);
+
+        await sendButtons(from,
+            `💬 *Feedback Inbox*\n\nChoose which inbox to view:`,
+            [
+                { id: 'pa_fbm_1', title: `🏪 Merchants (${merchantCount})` },
+                { id: 'pa_fbc_1', title: `👤 Customers (${customerCount})` },
+                { id: 'pa_menu',  title: '🛡️ Admin Menu' }
+            ]
+        );
+        return;
+    }
+
+    // ── Merchant feedback (pa_fbm_{page}) ────────────────────────────────────
+    if (input.startsWith('pa_fbm_')) {
+        const page = parseInt(input.replace('pa_fbm_', ''), 10) || 1;
+        const PAGE_SIZE = 5;
+        const skip = (page - 1) * PAGE_SIZE;
+
+        const [items, total] = await Promise.all([
+            db.auditLog.findMany({
+                where: { action: 'MERCHANT_FEEDBACK' },
+                orderBy: { createdAt: 'desc' },
+                take: PAGE_SIZE,
+                skip
+            }),
+            db.auditLog.count({ where: { action: 'MERCHANT_FEEDBACK' } })
+        ]);
+
+        if (total === 0) {
+            await sendButtons(from, '📭 No merchant feedback yet.', [
+                { id: 'pa_feedback', title: '⬅️ Feedback Inbox' }
+            ]);
+            return;
+        }
+
+        const totalPages = Math.ceil(total / PAGE_SIZE);
+        let msg = `🏪 *Merchant Feedback* (${total} total)\n━━━━━━━━━━━━━━━━━━━━\n`;
+        for (const item of items) {
+            const meta = item.metadata_json as any;
+            const date = item.createdAt.toLocaleDateString('en-ZA', { day: '2-digit', month: 'short' });
+            msg += `\n📩 *${meta?.merchant_name ?? item.actor_wa_id}* (${date})\n${meta?.message ?? '(no text)'}\n`;
+        }
+
+        const navBtns: Array<{ id: string; title: string }> = [];
+        if (page > 1) navBtns.push({ id: `pa_fbm_${page - 1}`, title: '◀ Prev' });
+        if (page < totalPages) navBtns.push({ id: `pa_fbm_${page + 1}`, title: 'Next ▶' });
+        navBtns.push({ id: 'pa_feedback', title: '⬅️ Back' });
+
+        await sendButtons(from, msg, navBtns.slice(0, 3));
+        return;
+    }
+
+    // ── Customer feedback (pa_fbc_{page}) ────────────────────────────────────
+    if (input.startsWith('pa_fbc_')) {
+        const page = parseInt(input.replace('pa_fbc_', ''), 10) || 1;
+        const PAGE_SIZE = 5;
+        const skip = (page - 1) * PAGE_SIZE;
+
+        const [items, total] = await Promise.all([
+            db.auditLog.findMany({
+                where: { action: 'CUSTOMER_FEEDBACK' },
+                orderBy: { createdAt: 'desc' },
+                take: PAGE_SIZE,
+                skip
+            }),
+            db.auditLog.count({ where: { action: 'CUSTOMER_FEEDBACK' } })
+        ]);
+
+        if (total === 0) {
+            await sendButtons(from, '📭 No customer feedback yet.', [
+                { id: 'pa_feedback', title: '⬅️ Feedback Inbox' }
+            ]);
+            return;
+        }
+
+        const totalPages = Math.ceil(total / PAGE_SIZE);
+        let msg = `👤 *Customer Feedback* (${total} total)\n━━━━━━━━━━━━━━━━━━━━\n`;
+        for (const item of items) {
+            const meta = item.metadata_json as any;
+            const date = item.createdAt.toLocaleDateString('en-ZA', { day: '2-digit', month: 'short' });
+            msg += `\n📩 *${meta?.customer_name ?? item.actor_wa_id}* (${date})\n${meta?.message ?? '(no text)'}\n`;
+        }
+
+        const navBtns: Array<{ id: string; title: string }> = [];
+        if (page > 1) navBtns.push({ id: `pa_fbc_${page - 1}`, title: '◀ Prev' });
+        if (page < totalPages) navBtns.push({ id: `pa_fbc_${page + 1}`, title: 'Next ▶' });
+        navBtns.push({ id: 'pa_feedback', title: '⬅️ Back' });
+
+        await sendButtons(from, msg, navBtns.slice(0, 3));
         return;
     }
 };

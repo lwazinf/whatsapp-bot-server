@@ -823,6 +823,26 @@ export const handleInventoryActions = async (
                 metadata: { name: updated.name, price: updated.price, image_url: updated.image_url }
             });
             await clearState(from);
+
+            // If merchant is still in ONBOARDING (hasn't gone live yet), show the going-live disclaimer
+            if (merchant.status === 'ONBOARDING') {
+                const settings = await (db as any).platformSettings?.findFirst?.() ?? null;
+                const feeText = settings ? ` Your sales are subject to a ${Math.round(settings.platformFee * 100)}% platform fee.` : '';
+                await sendButtons(from,
+                    `🚀 *Ready to go live?*\n\n` +
+                    `By making your store live on Omeru, you confirm that:\n\n` +
+                    `• Your products are accurately described and priced\n` +
+                    `• You will fulfil orders placed through the platform\n` +
+                    `• You agree to Omeru's terms of service${feeText}\n\n` +
+                    `_Your store will be visible to customers once you accept._`,
+                    [
+                        { id: `ob_golive_accept_${pid}`, title: '✅ Accept & Go Live' },
+                        { id: 'm_inventory', title: '📦 Back to Products' }
+                    ]
+                );
+                return;
+            }
+
             await sendTextMessage(from, '🎉 Product is now live!');
             await handleInventoryActions(from, 'm_inventory', session, merchant);
             return;

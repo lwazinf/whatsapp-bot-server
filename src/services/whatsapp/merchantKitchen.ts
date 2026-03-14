@@ -18,12 +18,13 @@ export const handleKitchenActions = async (
         const merchantBranding = await db.merchantBranding.findUnique({ where: { merchant_id: merchant.id } });
         // Kitchen Menu
         if (input === 'm_kitchen') {
-            const [newCount, readyCount] = await Promise.all([
+            const [newCount, readyCount, reviewCount] = await Promise.all([
                 db.order.count({ where: { merchant_id: merchant.id, status: { in: ['PENDING', 'PAID'] } } }),
-                db.order.count({ where: { merchant_id: merchant.id, status: 'READY_FOR_PICKUP' } })
+                db.order.count({ where: { merchant_id: merchant.id, status: 'READY_FOR_PICKUP' } }),
+                db.auditLog.count({ where: { action: 'CUSTOMER_FEEDBACK', metadata_json: { path: ['merchant_id'], equals: merchant.id } } })
             ]);
 
-            await sendButtons(from, 
+            await sendButtons(from,
                 `🍳 *Kitchen*\n\n📊 New: ${newCount} | Ready: ${readyCount}`,
                 [
                     { id: 'k_new', title: newCount > 0 ? `🔥 New (${newCount})` : '📥 New Orders' },
@@ -31,6 +32,50 @@ export const handleKitchenActions = async (
                     { id: 'm_dashboard', title: '🏠 Dashboard' }
                 ]
             );
+            await sendButtons(from, '⭐ Customer Reviews:', [
+                { id: 'm_reviews', title: reviewCount > 0 ? `⭐ Reviews (${reviewCount})` : '⭐ Reviews' }
+            ]);
+            return;
+        }
+
+        // ── Customer reviews ──────────────────────────────────────────────────
+        if (input === 'm_reviews' || input.startsWith('m_reviews_p')) {
+            const page = input === 'm_reviews' ? 1 : (parseInt(input.replace('m_reviews_p', ''), 10) || 1);
+            const PAGE_SIZE = 5;
+            const skip = (page - 1) * PAGE_SIZE;
+
+            const [items, total] = await Promise.all([
+                db.auditLog.findMany({
+                    where: { action: 'CUSTOMER_FEEDBACK', metadata_json: { path: ['merchant_id'], equals: merchant.id } },
+                    orderBy: { createdAt: 'desc' },
+                    take: PAGE_SIZE,
+                    skip
+                }),
+                db.auditLog.count({ where: { action: 'CUSTOMER_FEEDBACK', metadata_json: { path: ['merchant_id'], equals: merchant.id } } })
+            ]);
+
+            if (total === 0) {
+                await sendButtons(from, '📭 No customer reviews yet.', [{ id: 'm_kitchen', title: '🍳 Kitchen' }]);
+                return;
+            }
+
+            const totalPages = Math.ceil(total / PAGE_SIZE);
+            let msg = `⭐ *Customer Reviews* (${total} total)\n━━━━━━━━━━━━━━━━━━━━\n`;
+
+            for (const item of items) {
+                const meta = item.metadata_json as any;
+                const stars = '⭐'.repeat(meta?.rating ?? 0);
+                const comment = meta?.comment ? `\n"${meta.comment}"` : '';
+                const date = item.createdAt.toLocaleDateString('en-ZA', { day: '2-digit', month: 'short' });
+                msg += `\n${stars} (${date})${comment}\n`;
+            }
+
+            const navBtns: Array<{ id: string; title: string }> = [];
+            if (page > 1) navBtns.push({ id: `m_reviews_p${page - 1}`, title: '◀ Prev' });
+            if (page < totalPages) navBtns.push({ id: `m_reviews_p${page + 1}`, title: 'Next ▶' });
+            navBtns.push({ id: 'm_kitchen', title: '🍳 Kitchen' });
+
+            await sendButtons(from, msg, navBtns.slice(0, 3));
             return;
         }
 
@@ -203,8 +248,12 @@ export const handleKitchenActions = async (
 
             await db.order.update({ where: { id: oid }, data: { status: OrderStatus.COMPLETED } });
 
-            // Notify customer
+            // Notify customer + prompt for rating
             await sendTextMessage(order.customer_id, `🎉 *Order Complete!*\n\nThank you for ordering from *${merchant.trading_name}*!`);
+            await sendButtons(order.customer_id,
+                `⭐ _How was your experience? Rate your order from *${merchant.trading_name}* — it only takes a second._`,
+                [{ id: `cfb_start_${oid}`, title: '⭐ Rate Experience' }]
+            );
 
             // Log fee to admin
             const fee = order.total * platformSettings.platformFee;

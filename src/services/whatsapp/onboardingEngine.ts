@@ -159,10 +159,11 @@ const handleHours = async (from: string, input: string, session: UserSession, me
     const state = session.active_prod_id || '';
 
     if (input === 'ob_hours_def') {
-        await db.merchant.update({ 
-            where: { wa_id: from }, 
-            data: { open_time: '09:00', close_time: '17:00', sat_open_time: '10:00', sat_close_time: '15:00', sun_open: false } 
+        await db.merchant.update({
+            where: { wa_id: from },
+            data: { open_time: '09:00', close_time: '17:00', sat_open_time: '10:00', sat_close_time: '15:00', sun_open: false }
         });
+        await sendTextMessage(from, '✅ Standard hours set (Mon–Fri 9am–5pm, Sat 10am–3pm, Sun closed).');
         await showTerms(from);
         return;
     }
@@ -228,23 +229,26 @@ const showTerms = async (from: string): Promise<void> => {
 
 const handleTerms = async (from: string, input: string, merchant: Merchant): Promise<void> => {
     if (input === 'ob_accept') {
-        await db.merchant.update({ 
-            where: { wa_id: from }, 
-            data: { accepted_terms: true, status: MerchantStatus.ACTIVE } 
+        await db.merchant.update({
+            where: { wa_id: from },
+            data: { accepted_terms: true }
+            // status stays ONBOARDING — store goes live after first product + disclaimer
         });
         await db.merchantInvite.updateMany({
             where: { invited_wa_id: from, merchant_id: merchant.id, status: 'PENDING' },
             data: { status: 'ACCEPTED', accepted_at: new Date(), revoked_at: null }
         });
-        await db.userSession.update({ where: { wa_id: from }, data: { mode: 'MERCHANT', active_prod_id: null } });
+        await db.userSession.update({
+            where: { wa_id: from },
+            data: { mode: 'MERCHANT', active_merchant_id: merchant.id, active_prod_id: null }
+        });
 
-        await sendButtons(from, 
-            `🎉 *Congratulations!*\n\n` +
-            `*${merchant.trading_name}* is LIVE!\n` +
-            `📱 @${merchant.handle}\n\n` +
-            'Add your first product!',
+        await sendButtons(from,
+            `✅ *Terms accepted!*\n\n` +
+            `One last step — add your first product.\n\n` +
+            `Once you publish it, you'll see a short disclaimer and your store goes live! 🚀`,
             [
-                { id: 'm_add_prod', title: '➕ Add Product' },
+                { id: 'm_add_prod', title: '➕ Add First Product' },
                 { id: 'm_dashboard', title: '🏪 Dashboard' }
             ]
         );

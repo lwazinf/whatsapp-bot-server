@@ -37,7 +37,7 @@ const INVENTORY_PREFIXES = [
     'cancel_prod_img',
     'p_view_all_p'
 ];
-const KITCHEN_PREFIXES = ['m_kitchen', 'k_', 'ready_', 'collected_', 'view_kitchen_', 'cancel_order_', 'confirm_cancel_', 'abort_cancel_'];
+const KITCHEN_PREFIXES = ['m_kitchen', 'k_', 'ready_', 'collected_', 'view_kitchen_', 'cancel_order_', 'confirm_cancel_', 'abort_cancel_', 'm_reviews', 'm_reviews_p'];
 const SETTINGS_PREFIXES = ['m_settings', 's_', 'h_', 'm_edit_hours', 'ob_hours', 's_browse_toggle', 's_welcome_img', 's_clear_welcome_img', 'mcat_'];
 const BROADCAST_PREFIXES = ['m_broadcast', 'b_'];
 
@@ -51,9 +51,74 @@ export const handleMerchantAction = async (
     try {
         const platformBranding = await getPlatformBranding(db);
         const merchantBranding = await db.merchantBranding.findUnique({ where: { merchant_id: merchant.id } });
+        // Going-live disclaimer acceptance (end of onboarding)
+        if (input.startsWith('ob_golive_accept_')) {
+            const activatedMerchant = await db.merchant.update({
+                where: { id: merchant.id },
+                data: { status: 'ACTIVE' }
+            });
+            await sendButtons(from,
+                `🎉 *${activatedMerchant.trading_name} is now LIVE!*\n\n` +
+                `Customers can find you at *@${activatedMerchant.handle}*.\n\n` +
+                `Welcome to Omeru! 🛍️`,
+                [
+                    { id: 'm_inventory', title: '📦 My Products' },
+                    { id: 'm_dashboard', title: '🏪 Dashboard' }
+                ]
+            );
+            return;
+        }
+
+        // Quick open/close toggle from dashboard
+        if (input === 'dash_toggle') {
+            const updated = await db.merchant.update({
+                where: { id: merchant.id },
+                data: { manual_closed: !merchant.manual_closed }
+            });
+            await sendTextMessage(from, `🚦 Shop is now ${updated.manual_closed ? '*CLOSED* 🔴' : '*OPEN* 🟢'}`);
+            await showMerchantDashboard(from, updated);
+            return;
+        }
+
         // Dashboard
         if (input === 'm_dashboard' || input.toLowerCase() === 'menu' || input.toLowerCase() === 'home') {
             await showMerchantDashboard(from, merchant);
+            return;
+        }
+
+        // Feedback to platform admin
+        if (input === 'm_feedback') {
+            await db.userSession.update({
+                where: { wa_id: from },
+                data: { active_prod_id: 'MERCHANT_FEEDBACK_MSG', state: null }
+            });
+            await sendTextMessage(from,
+                `💬 *Send Feedback to Platform*\n\n` +
+                `Type your message below. It will be sent directly to the platform admin.\n\n` +
+                `_Type "Omeru" to cancel._`
+            );
+            return;
+        }
+
+        // Capture feedback text
+        if (session.active_prod_id === 'MERCHANT_FEEDBACK_MSG') {
+            await db.auditLog.create({
+                data: {
+                    actor_wa_id: from,
+                    action: 'MERCHANT_FEEDBACK',
+                    entity_type: 'merchant',
+                    entity_id: merchant.id,
+                    metadata_json: { message: input, merchant_name: merchant.trading_name }
+                }
+            });
+            await db.userSession.update({
+                where: { wa_id: from },
+                data: { active_prod_id: null, state: null }
+            });
+            await sendButtons(from,
+                `✅ *Feedback sent!*\n\nThank you — the platform team will review your message.`,
+                [{ id: 'm_dashboard', title: '🏠 Dashboard' }]
+            );
             return;
         }
 

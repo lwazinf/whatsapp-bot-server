@@ -65,6 +65,22 @@ export const checkStaleOrders = async (): Promise<void> => {
             } catch (err: any) {
                 console.error(`❌ Customer alert failed for ${order.id}: ${err.message}`);
             }
+            // Final warning to merchant — auto-cancel is 15 min away
+            try {
+                const orderFull = await db.order.findUnique({
+                    where: { id: order.id },
+                    include: { merchant: { include: { branding: true } } }
+                });
+                if (orderFull?.merchant?.wa_id) {
+                    await sendButtons(
+                        orderFull.merchant.wa_id,
+                        `⚠️ *Order #${order.id.slice(-5)} still unpaid!*\n\n${formatCurrency(order.total, { merchant: orderFull.merchant, merchantBranding: orderFull.merchant.branding, platform: platformBranding })}\n\nThis order will auto-cancel in 15 minutes.`,
+                        [{ id: `view_kitchen_${order.id}`, title: '👨‍🍳 View Order' }]
+                    );
+                }
+            } catch (err: any) {
+                console.error(`❌ Merchant 60min alert failed for ${order.id}: ${err.message}`);
+            }
             await new Promise(r => setTimeout(r, 500));
         }
 

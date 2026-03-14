@@ -2,7 +2,7 @@ import { MerchantStatus } from '@prisma/client';
 import { handleMerchantAction } from './merchantEngine';
 import { handleOnboardingAction } from './onboardingEngine';
 import { handleCustomerDiscovery } from './customerDiscovery';
-import { handleCustomerOrders } from './customerOrders';
+import { handleCustomerOrders, handleFeedbackCommentState } from './customerOrders';
 import { handlePlatformAdminActions } from './platformAdmin';
 import { handleHelpCommand } from './helpEngine';
 import { sendTextMessage, sendButtons, sendListMessage, sendImageMessage } from './sender';
@@ -65,9 +65,29 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
 
         // 3. GLOBAL COMMANDS
 
-        // Help command
+        // Help command — platform admin only (prevents leaking backend info to lower profiles)
         if (input === 'HelpOmeru' || normalizedInput === 'helpomeru') {
-            await handleHelpCommand(from);
+            if (isPlatformAdmin(from)) {
+                await handleHelpCommand(from);
+            } else if (session.mode === 'MERCHANT' && merchantForUser) {
+                await handleMerchantAction(from, 'menu', session, merchantForUser, message);
+            } else {
+                await sendCustomerWelcome(from);
+            }
+            return;
+        }
+
+        // "Omeru" — drop all state and return to the user's main profile menu
+        if (normalizedInput === 'omeru') {
+            await db.userSession.update({ where: { wa_id: from }, data: { active_prod_id: null, state: null } });
+            if (session.mode === 'MERCHANT' && merchantForUser) {
+                const freshSession = await db.userSession.findUnique({ where: { wa_id: from } });
+                await handleMerchantAction(from, 'menu', freshSession!, merchantForUser, message);
+            } else if (isPlatformAdmin(from)) {
+                await handlePlatformAdminActions(from, 'admin');
+            } else {
+                await sendCustomerWelcome(from);
+            }
             return;
         }
 
@@ -170,12 +190,17 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
 
         // 4. ROUTING LOGIC
 
-        // Registration Flow
-        if (session.mode === 'REGISTERING' || (merchantForUser && merchantForUser.status !== MerchantStatus.ACTIVE)) {
+        // Registration Flow — only while terms not yet accepted (after acceptance, route to MERCHANT mode)
+        if (session.mode === 'REGISTERING' || (merchantForUser && merchantForUser.status !== MerchantStatus.ACTIVE && !merchantForUser.accepted_terms)) {
             const canOnboard = await canAccessOnboarding(from, merchantForUser?.id);
             if (!canOnboard) {
                 await sendTextMessage(from, '⛔ Your account is not yet invited. Please contact the platform admin.');
                 return;
+            }
+            // Show "Resuming" banner when merchant re-enters mid-flow
+            const isEntryInput = ['hi', 'hello', 'hey', 'sell', 'register', 'start'].includes(normalizedInput);
+            if (isEntryInput && merchantForUser?.trading_name && !session.active_prod_id) {
+                await sendTextMessage(from, `👋 *Resuming your onboarding for *${merchantForUser.trading_name}*!\n\nLet's continue where you left off...`);
             }
             await handleOnboardingAction(from, input, session, merchantForUser, message);
             return;
@@ -271,12 +296,13 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
             input.startsWith('@') ||
             input === 'browse_shops' || input.startsWith('browse_shops_p') ||
             input.startsWith('bcat_') ||
-            input.startsWith('sp_') ||
+            input.startsWith('sp_') || input.startsWith('spf_') || input.startsWith('ssort_') ||
             input.startsWith('vpick_') ||
             input.startsWith('cat_') ||
             input.startsWith('prod_') || input.startsWith('variant_') ||
             input.startsWith('add_cart_') || input.startsWith('replace_cart_') ||
             input.startsWith('buy_now_prod_') || input.startsWith('buy_now_variant_') ||
+            input.startsWith('resume_bnp_') || input.startsWith('resume_bnv_') ||
             input === 'c_cart' || input === 'cart_clear' || input === 'cart_checkout' || input === 'cart_confirm_order' ||
             input === 'cart_edit_qty' || input.startsWith('cedit_') ||
             input.startsWith('wish_prod_') || input === 'c_wishlist'
@@ -291,8 +317,15 @@ export const handleIncomingMessage = async (message: any): Promise<void> => {
             return;
         }
 
-        if (input === 'c_my_orders' || input.startsWith('view_order_') || input.startsWith('delete_order_') || input.startsWith('pay_stale_')) {
+        if (input === 'c_my_orders' || input.startsWith('view_order_') || input.startsWith('delete_order_') ||
+            input.startsWith('pay_stale_') || input.startsWith('cfb_')) {
             await handleCustomerOrders(from, input);
+            return;
+        }
+
+        // Feedback comment text input state
+        if (session.active_prod_id?.startsWith('feedback_comment_')) {
+            await handleFeedbackCommentState(from, input);
             return;
         }
 
@@ -388,7 +421,9 @@ const sendCustomerWelcome = async (from: string): Promise<void> => {
             `🛍️ Browse stores & discover products`,
             `🛒 Add to cart & checkout in seconds`,
             `❤️ Save items to your wishlist`,
-            `📦 Track your orders anytime`
+            `📦 Track your orders anytime`,
+            ``,
+            `💡 _Tip: Type @storename to visit any shop directly_`
         ].join('\n');
 
         if (platformBranding?.logo_url) {
