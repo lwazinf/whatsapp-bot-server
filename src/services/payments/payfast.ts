@@ -51,14 +51,14 @@ export type PayfastPaymentResult = {
  * Rules (per PayFast docs):
  *   - Params must be in the same order they appear in the request
  *   - 'signature' key is excluded
- *   - Empty-string values are excluded
+ *   - Empty-string values ARE included (PayFast includes them in ITN signature)
  *   - Values are URL-encoded with spaces as '+'
  *   - Passphrase appended as &passphrase=... if set, otherwise trailing & removed
  */
 const generateSignature = (params: Record<string, string>): string => {
     let pfString = '';
     for (const [key, val] of Object.entries(params)) {
-        if (key !== 'signature' && val !== '') {
+        if (key !== 'signature') {
             pfString += `${key}=${encodeURIComponent(val.trim()).replace(/%20/g, '+')}&`;
         }
     }
