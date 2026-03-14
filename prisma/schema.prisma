@@ -244,6 +244,13 @@ model Wishlist {
   @@unique([wa_id, product_id])
 }
 
+model ShortLink {
+  id         String   @id @default(cuid())
+  code       String   @unique
+  url        String
+  createdAt  DateTime @default(now())
+}
+
 model AuditLog {
   id            String   @id @default(cuid())
   actor_wa_id   String

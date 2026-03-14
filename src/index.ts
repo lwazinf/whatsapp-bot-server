@@ -23,6 +23,17 @@ app.get('/health', (req: Request, res: Response) => {
     res.status(200).send('OK');
 });
 
+// ── Short link redirects ─────────────────────────────────────────────────────
+app.get('/p/:code', async (req: Request, res: Response) => {
+    try {
+        const link = await db.shortLink.findUnique({ where: { code: req.params.code } });
+        if (!link) return res.status(404).send('Link not found');
+        res.redirect(301, link.url);
+    } catch {
+        res.status(500).send('Server error');
+    }
+});
+
 /**
  * Webhook Verification
  */

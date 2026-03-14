@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import axios from 'axios';
+import { createShortLink } from '../../lib/shortlink';
 
 // ── Config ─────────────────────────────────────────────────────────────────
 
@@ -104,9 +105,10 @@ export const createPaymentRequest = async (params: {
     pfParams.signature = generateSignature(pfParams);
 
     const queryString = new URLSearchParams(pfParams).toString();
-    const paymentUrl = `${PAYMENT_PAGE_URL}?${queryString}`;
+    const fullUrl = `${PAYMENT_PAGE_URL}?${queryString}`;
+    const paymentUrl = await createShortLink(fullUrl);
 
-    console.log(`💳 PayFast: generated payment URL for order ${params.orderId.slice(-5)} — R${pfParams.amount} [${IS_SANDBOX ? 'SANDBOX' : 'LIVE'}]`);
+    console.log(`💳 PayFast: payment URL for order ${params.orderId.slice(-5)} — R${pfParams.amount} [${IS_SANDBOX ? 'SANDBOX' : 'LIVE'}] → ${paymentUrl}`);
 
     return {
         paymentUrl,
